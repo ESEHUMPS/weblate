@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import os
+from logging.handlers import SysLogHandler
 
 from django.core.exceptions import PermissionDenied
 from django.http import Http404
@@ -819,8 +820,16 @@ DEFAULT_EXCEPTION_REPORTER_FILTER = "weblate.trans.debug.WeblateExceptionReporte
 # - you can also choose "logfile" to log into separate file
 #   after configuring it below
 
-DEFAULT_LOG = "console"
+# Syslog is not present inside Docker
+HAVE_SYSLOG = False
+DEFAULT_LOG = ["console" if DEBUG or not HAVE_SYSLOG else "syslog"]
 DEFAULT_LOGLEVEL = get_env_str("WEBLATE_LOGLEVEL", "DEBUG" if DEBUG else "INFO")
+
+# GELF TCP integration (Graylog)
+WEBLATE_LOG_GELF_HOST = get_env_str("WEBLATE_LOG_GELF_HOST", None)
+
+if WEBLATE_LOG_GELF_HOST:
+    DEFAULT_LOG.append("gelf")
 
 # A sample logging configuration. The only tangible logging
 # performed by this configuration is to send an email to
@@ -859,7 +868,7 @@ LOGGING: dict = {
     },
     "loggers": {
         "django.request": {
-            "handlers": [DEFAULT_LOG],
+            "handlers": [*DEFAULT_LOG],
             "level": "ERROR",
             "propagate": True,
         },
@@ -870,21 +879,74 @@ LOGGING: dict = {
         },
         # Logging database queries
         "django.db.backends": {
-            "handlers": [DEFAULT_LOG],
+            "handlers": [*DEFAULT_LOG],
+            # Toggle to DEBUG to log all database queries
             "level": get_env_str("WEBLATE_LOGLEVEL_DATABASE", "CRITICAL"),
         },
-        "redis_lock": {"handlers": [DEFAULT_LOG], "level": DEFAULT_LOGLEVEL},
-        "weblate": {"handlers": [DEFAULT_LOG], "level": DEFAULT_LOGLEVEL},
+        "redis_lock": {
+            "handlers": [*DEFAULT_LOG],
+            "level": DEFAULT_LOGLEVEL,
+        },
+        "weblate": {
+            "handlers": [*DEFAULT_LOG],
+            "level": DEFAULT_LOGLEVEL,
+        },
         # Logging VCS operations
-        "weblate.vcs": {"handlers": [DEFAULT_LOG], "level": DEFAULT_LOGLEVEL},
+        "weblate.vcs": {
+            "handlers": [*DEFAULT_LOG],
+            "level": DEFAULT_LOGLEVEL,
+        },
         # Python Social Auth
-        "social": {"handlers": [DEFAULT_LOG], "level": DEFAULT_LOGLEVEL},
+        "social": {
+            "handlers": [*DEFAULT_LOG],
+            "level": DEFAULT_LOGLEVEL,
+        },
         # Django Authentication Using LDAP
-        "django_auth_ldap": {"handlers": [DEFAULT_LOG], "level": DEFAULT_LOGLEVEL},
+        "django_auth_ldap": {
+            "handlers": [*DEFAULT_LOG],
+            "level": DEFAULT_LOGLEVEL,
+        },
         # SAML IdP
-        "djangosaml2idp": {"handlers": [DEFAULT_LOG], "level": DEFAULT_LOGLEVEL},
+        "djangosaml2idp": {
+            "handlers": [*DEFAULT_LOG],
+            "level": DEFAULT_LOGLEVEL,
+        },
+        # gunicorn
+        "gunicorn.error": {
+            "level": "INFO",
+            "handlers": [*DEFAULT_LOG],
+            "propagate": True,
+            "qualname": "gunicorn.error",
+        },
     },
 }
+
+# Configure syslog setup if it's present
+if HAVE_SYSLOG:
+    LOGGING["formatters"]["syslog"] = {
+        "format": "weblate[%(process)d]: %(levelname)s %(message)s",
+    }
+    LOGGING["handlers"]["syslog"] = {
+        "level": "DEBUG",
+        "class": "logging.handlers.SysLogHandler",
+        "formatter": "syslog",
+        "address": "/dev/log",
+        "facility": SysLogHandler.LOG_LOCAL2,
+    }
+
+# Configure GELF integration if presetn
+if WEBLATE_LOG_GELF_HOST:
+    LOGGING["formatters"]["gelf"] = {
+        "()": "logging_gelf.formatters.GELFFormatter",
+        "null_character": True,
+    }
+    LOGGING["handlers"]["gelf"] = {
+        "level": "DEBUG",
+        "class": "logging_gelf.handlers.GELFTCPSocketHandler",
+        "formatter": "gelf",
+        "host": WEBLATE_LOG_GELF_HOST,
+        "port": get_env_int("WEBLATE_LOG_GELF_PORT", 12201),
+    }
 
 if get_env_bool("WEBLATE_ADMIN_NOTIFY_ERROR", True):
     LOGGING["loggers"]["django.request"]["handlers"].append("mail_admins")
@@ -1069,6 +1131,7 @@ CHECK_LIST = [
     "weblate.checks.source.LongUntranslatedCheck",
     "weblate.checks.format.MultipleUnnamedFormatsCheck",
     "weblate.checks.glossary.GlossaryCheck",
+    "weblate.checks.glossary.ProhibitedInitialCharacterCheck",
     "weblate.checks.fluent.syntax.FluentSourceSyntaxCheck",
     "weblate.checks.fluent.syntax.FluentTargetSyntaxCheck",
     "weblate.checks.fluent.parts.FluentPartsCheck",
@@ -1099,7 +1162,7 @@ WEBLATE_ADDONS = [
     "weblate.addons.gettext.GettextAuthorComments",
     "weblate.addons.cleanup.CleanupAddon",
     "weblate.addons.cleanup.RemoveBlankAddon",
-    "weblate.addons.consistency.LangaugeConsistencyAddon",
+    "weblate.addons.consistency.LanguageConsistencyAddon",
     "weblate.addons.discovery.DiscoveryAddon",
     "weblate.addons.autotranslate.AutoTranslateAddon",
     "weblate.addons.flags.SourceEditAddon",
@@ -1200,7 +1263,9 @@ if not get_env_bool("REDIS_VERIFY_SSL", True) and REDIS_PROTO == "rediss":
 
 
 # Store sessions in cache
-SESSION_ENGINE = "django.contrib.sessions.backends.cache"
+SESSION_ENGINE = os.environ.get(
+    "WEBLATE_SESSION_ENGINE", "django.contrib.sessions.backends.cache"
+)
 # Store messages in session
 MESSAGE_STORAGE = "django.contrib.messages.storage.session.SessionStorage"
 
@@ -1437,6 +1502,7 @@ SENTRY_PROFILES_SAMPLE_RATE = get_env_float("SENTRY_PROFILES_SAMPLE_RATE", 1.0)
 SENTRY_TOKEN = get_env_str("SENTRY_TOKEN")
 SENTRY_SEND_PII = get_env_bool("SENTRY_SEND_PII", False)
 AKISMET_API_KEY = get_env_str("WEBLATE_AKISMET_API_KEY")
+ZAMMAD_URL = get_env_str("WEBLATE_ZAMMAD_URL")
 
 # Web Monetization
 INTERLEDGER_PAYMENT_POINTERS = get_env_list(

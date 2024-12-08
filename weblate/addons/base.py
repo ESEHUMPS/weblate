@@ -15,7 +15,7 @@ from django.core.exceptions import ValidationError
 from django.utils.functional import cached_property
 from django.utils.translation import gettext
 
-from weblate.addons.events import AddonEvent
+from weblate.addons.events import POST_CONFIGURE_EVENTS, AddonEvent
 from weblate.trans.exceptions import FileParseError
 from weblate.trans.models import Component
 from weblate.trans.util import get_clean_env
@@ -43,8 +43,8 @@ class CompatDict(TypedDict, total=False):
 class BaseAddon:
     """Base class for Weblate add-ons."""
 
-    events: tuple[AddonEvent, ...] = ()
-    settings_form: None | type[BaseAddonForm] = None
+    events: set[AddonEvent] = set()
+    settings_form: type[BaseAddonForm] | None = None
     name = ""
     compat: CompatDict = {}
     multiple = False
@@ -185,6 +185,8 @@ class BaseAddon:
     def post_configure_run_component(self, component) -> None:
         # Trigger post configure event for a VCS component
         previous = component.repository.last_revision
+        if not (POST_CONFIGURE_EVENTS & self.events):
+            return
 
         if AddonEvent.EVENT_POST_COMMIT in self.events:
             component.log_debug("running post_commit add-on: %s", self.name)
@@ -221,7 +223,7 @@ class BaseAddon:
     def can_install(cls, component: Component, user: User | None):  # noqa: ARG003
         """Check whether add-on is compatible with given component."""
         return all(
-            getattr(component, key) in cast(set, values)
+            getattr(component, key) in cast("set", values)
             for key, values in cls.compat.items()
         )
 
@@ -292,7 +294,7 @@ class BaseAddon:
         # To be implemented in a subclass
 
     def execute_process(
-        self, component: Component, cmd: list[str], env: None | dict[str, str] = None
+        self, component: Component, cmd: list[str], env: dict[str, str] | None = None
     ) -> None:
         component.log_debug("%s add-on exec: %s", self.name, " ".join(cmd))
         try:
@@ -406,9 +408,8 @@ class BaseAddon:
         from weblate.auth.models import User
 
         if not self.user_name or not self.user_verbose:
-            raise ValueError(
-                f"{self.__class__.__name__} is missing user_name and user_verbose!"
-            )
+            msg = f"{self.__class__.__name__} is missing user_name and user_verbose!"
+            raise ValueError(msg)
 
         return User.objects.get_or_create_bot(
             "addon", self.user_name, self.user_verbose
@@ -422,7 +423,9 @@ class UpdateBaseAddon(BaseAddon):
     It hooks to post update and commits all changed translations.
     """
 
-    events: tuple[AddonEvent, ...] = (AddonEvent.EVENT_POST_UPDATE,)
+    events: set[AddonEvent] = {
+        AddonEvent.EVENT_POST_UPDATE,
+    }
 
     @staticmethod
     def iterate_translations(component: Component):
@@ -446,5 +449,7 @@ class UpdateBaseAddon(BaseAddon):
 class StoreBaseAddon(BaseAddon):
     """Base class for add-ons tweaking store."""
 
-    events: tuple[AddonEvent, ...] = (AddonEvent.EVENT_STORE_POST_LOAD,)
+    events: set[AddonEvent] = {
+        AddonEvent.EVENT_STORE_POST_LOAD,
+    }
     icon = "wrench.svg"

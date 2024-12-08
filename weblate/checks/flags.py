@@ -136,7 +136,8 @@ def _parse_flags_text(flags: str) -> Iterator[str | tuple[Any, ...]]:
             yield tuple(value)
             state = 0
         else:
-            raise ValueError(f"Unexpected token: {token}, state={state}")
+            msg = f"Unexpected token: {token}, state={state}"
+            raise ValueError(msg)
 
     # With state 0 there was nothing parsed yet
     if state > 0:
@@ -185,7 +186,7 @@ class Flags:
             self.merge(flags)
 
     def get_items(
-        self, flags: None | str | etree._Element | Flags | tuple[str | tuple[Any, ...]]
+        self, flags: str | etree._Element | Flags | tuple[str | tuple[Any, ...]] | None
     ) -> tuple[str | tuple[Any, ...], ...]:
         if flags is None:
             return ()
@@ -198,7 +199,7 @@ class Flags:
         return flags
 
     def merge(
-        self, flags: None | str | etree._Element | Flags | tuple[str | tuple[Any, ...]]
+        self, flags: str | etree._Element | Flags | tuple[str | tuple[Any, ...]] | None
     ) -> None:
         for flag in self.get_items(flags):
             if isinstance(flag, tuple):
@@ -208,7 +209,7 @@ class Flags:
                 self._items[flag] = flag
 
     def remove(
-        self, flags: None | str | etree._Element | Flags | tuple[str | tuple[Any, ...]]
+        self, flags: str | etree._Element | Flags | tuple[str | tuple[Any, ...]] | None
     ) -> None:
         for flag in self.get_items(flags):
             if isinstance(flag, tuple):
@@ -227,7 +228,7 @@ class Flags:
         return isinstance(self._items.get(key), tuple)
 
     def get_value_raw(self, key: str) -> tuple[Any, ...]:
-        return cast(tuple, self._items[key])[1:]
+        return cast("tuple", self._items[key])[1:]
 
     def get_value(self, key: str):
         return TYPED_FLAGS_ARGS[key](self.get_value_raw(key))

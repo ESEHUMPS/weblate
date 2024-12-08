@@ -145,7 +145,7 @@ class BaseStats:
         self._loaded: bool = False
         self._pending_save: bool = False
         self.last_change_cache = None
-        self._collected_update_objects: None | list[BaseStats] = None
+        self._collected_update_objects: list[BaseStats] | None = None
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}:{self.cache_key}>"
@@ -264,7 +264,8 @@ class BaseStats:
 
     def __getattr__(self, name: str):
         if name.startswith("_"):
-            raise AttributeError(f"Invalid stats for {self}: {name}")
+            msg = f"Invalid stats for {self}: {name}"
+            raise AttributeError(msg)
 
         self.ensure_loaded()
 
@@ -283,7 +284,8 @@ class BaseStats:
             self._pending_save = True
             self.calculate_by_name(name)
             if name not in self._data:
-                raise AttributeError(f"Unsupported stats for {self}: {name}")
+                msg = f"Unsupported stats for {self}: {name}"
+                raise AttributeError(msg)
             if not was_pending:
                 self.save()
                 self._pending_save = False
@@ -508,6 +510,7 @@ class TranslationStats(BaseStats):
             "active_checks_count",
             "dismissed_checks_count",
             "suggestion_count",
+            "source_label_count",
             "label_count",
             "comment_count",
             "num_chars",
@@ -521,6 +524,7 @@ class TranslationStats(BaseStats):
             active_checks_count=Count("check", filter=Q(check__dismissed=False)),
             dismissed_checks_count=Count("check", filter=Q(check__dismissed=True)),
             suggestion_count=Count("suggestion"),
+            source_label_count=Count("source_unit__labels"),
             label_count=Count("source_unit__labels"),
             comment_count=Count("comment", filter=Q(comment__resolved=False)),
             num_chars=Length("source"),
@@ -532,6 +536,7 @@ class TranslationStats(BaseStats):
             get_active_checks_count,
             get_dismissed_checks_count,
             get_suggestion_count,
+            get_source_label_count,
             get_label_count,
             get_comment_count,
             get_num_chars,
@@ -550,7 +555,11 @@ class TranslationStats(BaseStats):
             unit for unit in units if get_state(unit) >= STATE_TRANSLATED
         ]
         units_todo = [unit for unit in units if get_state(unit) < STATE_TRANSLATED]
-        units_unlabeled = [unit for unit in units if not get_label_count(unit)]
+        units_unlabeled = [
+            unit
+            for unit in units
+            if not get_source_label_count(unit) and not get_label_count(unit)
+        ]
         units_allchecks = [unit for unit in units if get_active_checks_count(unit)]
         units_translated_checks = [
             unit
@@ -1055,7 +1064,7 @@ class ProjectLanguage(BaseURLMixin):
     def get_url_path(self):
         return [*self.project.get_url_path(), "-", self.language.code]
 
-    def get_absolute_url(self):
+    def get_absolute_url(self) -> str:
         return reverse("show", kwargs={"path": self.get_url_path()})
 
     def get_translate_url(self):
@@ -1153,7 +1162,7 @@ class CategoryLanguage(BaseURLMixin):
     def get_url_path(self):
         return [*self.category.get_url_path(), "-", self.language.code]
 
-    def get_absolute_url(self):
+    def get_absolute_url(self) -> str:
         return reverse("show", kwargs={"path": self.get_url_path()})
 
     def get_translate_url(self):

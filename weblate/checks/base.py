@@ -37,6 +37,7 @@ class BaseCheck:
     description: StrOrPromise = ""
     target = False
     source = False
+    glossary = False
     ignore_untranslated = True
     default_disabled = False
     propagates: bool = False
@@ -48,7 +49,7 @@ class BaseCheck:
     def get_identifier(self) -> str:
         return self.check_id
 
-    def get_propagated_value(self, unit: Unit) -> None | str:
+    def get_propagated_value(self, unit: Unit) -> str | None:
         return None
 
     def get_propagated_units(
@@ -163,7 +164,8 @@ class BaseCheck:
         return None
 
     def render(self, request: AuthenticatedHttpRequest, unit: Unit) -> StrOrPromise:
-        raise Http404("Not supported")
+        msg = "Not supported"
+        raise Http404(msg)
 
     def get_cache_key(self, unit: Unit, pos: int) -> str:
         return "check:{}:{}:{}:{}".format(

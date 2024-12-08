@@ -86,13 +86,15 @@ class UnitQuerySet(models.QuerySet):
         if rqtype.startswith("check:"):
             check_id = rqtype[6:]
             if check_id not in CHECKS:
-                raise ValueError(f"Unknown check: {check_id}")
+                msg = f"Unknown check: {check_id}"
+                raise ValueError(msg)
             return self.filter(check__name=check_id, check__dismissed=False)
         if rqtype.startswith("label:"):
             return self.filter(labels__name=rqtype[6:])
         if rqtype == "all":
             return self.all()
-        raise ValueError(f"Unknown filter: {rqtype}")
+        msg = f"Unknown filter: {rqtype}"
+        raise ValueError(msg)
 
     def prefetch(self):
         from weblate.trans.models import Component
@@ -303,7 +305,8 @@ class UnitQuerySet(models.QuerySet):
         try:
             return self.source_lookup[source]
         except KeyError:
-            raise Unit.DoesNotExist("No matching unit found!") from None
+            msg = "No matching unit found!"
+            raise Unit.DoesNotExist(msg) from None
 
     def order(self):
         return self.order_by("-priority", "position")
@@ -537,14 +540,17 @@ class Unit(models.Model, LoggerMixin):
         # Data for machinery integration
         self.machinery: UnitMemoryResultDict = {}
         # PluralMapper integration
-        self.plural_map: None | list[str] = None
+        self.plural_map: list[str] | None = None
         # Data for glossary integration
-        self.glossary_terms: None | list[Unit] = None
+        self.glossary_terms: list[Unit] | None = None
         self.glossary_positions: tuple[tuple[int, int], ...] = ()
         # Project backup integration
         self.import_data: dict[str, Any] = {}
         # Store original attributes for change tracking
         self.old_unit: OldUnit
+        # Avoid loading self-referencing source unit from the database
+        if self.id and self.source_unit_id == self.id:
+            self.source_unit = self
         if "state" in self.__dict__ and "source" in self.__dict__:
             # Avoid storing if .only() was used to fetch the query (eg. in stats)
             self.store_old_unit(self)
@@ -1037,8 +1043,8 @@ class Unit(models.Model, LoggerMixin):
         """Propagate current translation to all others."""
         from weblate.auth.permissions import PermissionResult
 
-        result = False
-        for unit in self.same_source_units:
+        to_update: list[Unit] = []
+        for unit in self.same_source_units.select_for_update():
             if unit.target == self.target and unit.state == self.state:
                 continue
             if user is not None and not (denied := user.has_perm("unit.edit", unit)):
@@ -1054,15 +1060,32 @@ class Unit(models.Model, LoggerMixin):
                 continue
             unit.target = self.target
             unit.state = self.state
-            unit.save_backend(
-                user,
-                propagate=False,
-                change_action=change_action,
-                author=None,
-                run_checks=False,
-            )
-            result = True
-        return result
+            unit.commit_if_pending(user)
+            to_update.append(unit)
+
+        if not to_update:
+            return False
+
+        # Bulk update units
+        Unit.objects.filter(pk__in=(unit.pk for unit in to_update)).update(
+            target=self.target,
+            state=self.state,
+            last_updated=self.last_updated,
+        )
+
+        # Postprocess changes and generate change objects
+        changes = [
+            unit.post_save(user, user, None, check_new=False, save=False)
+            for unit in to_update
+        ]
+
+        # Bulk create changes
+        Change.objects.bulk_create(changes)
+
+        # Update user stats
+        user.profile.increase_count("translated", len(to_update))
+
+        return True
 
     def commit_if_pending(self, author: User) -> None:
         """Commit possible previous changes on this unit."""
@@ -1138,8 +1161,28 @@ class Unit(models.Model, LoggerMixin):
             propagate_checks=was_propagated or changed,
         )
 
+        # Generate change and process it
+        self.post_save(user or author, author, change_action)
+
+        # Update related source strings if working on a template
+        if self.translation.is_template and self.old_unit["target"] != self.target:
+            self.update_source_units(self.old_unit["target"], user or author, author)
+
+        return True
+
+    def post_save(
+        self,
+        user: User,
+        author: User | None,
+        change_action: int | None,
+        *,
+        save: bool = True,
+        check_new: bool = True,
+    ) -> Change:
         # Generate Change object for this change
-        change = self.generate_change(user or author, author, change_action)
+        change = self.generate_change(
+            user or author, author, change_action, save=save, check_new=check_new
+        )
 
         if change.action not in {
             Change.ACTION_UPLOAD,
@@ -1161,13 +1204,9 @@ class Unit(models.Model, LoggerMixin):
             )
 
             # Update user stats
-            change.author.profile.increase_count("translated")
-
-        # Update related source strings if working on a template
-        if self.translation.is_template and self.old_unit["target"] != self.target:
-            self.update_source_units(self.old_unit["target"], user or author, author)
-
-        return True
+            if save:
+                change.author.profile.increase_count("translated")
+        return change
 
     def update_source_units(
         self, previous_source: str, user: User, author: User | None
@@ -1226,7 +1265,7 @@ class Unit(models.Model, LoggerMixin):
         self,
         user: User | None,
         author: User | None,
-        change_action: int,
+        change_action: int | None,
         *,
         check_new: bool = True,
         save: bool = True,
@@ -1346,8 +1385,9 @@ class Unit(models.Model, LoggerMixin):
             meth = "check_target"
             args = src, tgt, self
         if self.translation.component.is_glossary:
-            # We might eventually run some checks on glossary
-            checks = {}
+            checks = CHECKS.glossary
+            meth = "check_source"
+            args = src, self
 
         # Run all checks
         if propagate is True:

@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from weblate.trans.models import Unit
 
 
-def get_machinery_language(language):
+def get_machinery_language(language: Language) -> Language:
     if language.code.endswith("_devel"):
         return Language.objects.get(code=language.code[:-6])
     return language
@@ -77,6 +77,10 @@ class SettingsDict(TypedDict, total=False):
     persona: str
     style: str
     custom_model: str
+    bucket_name: str
+    context_vector: str
+    deployment: str
+    azure_endpoint: str
 
 
 class TranslationResultDict(TypedDict):
@@ -93,7 +97,7 @@ class TranslationResultDict(TypedDict):
 class UnitMemoryResultDict(TypedDict, total=False):
     quality: list[int]
     translation: list[str]
-    origin: list[None | BatchMachineTranslation]
+    origin: list[BatchMachineTranslation] | None
 
 
 DownloadTranslations = Iterable[TranslationResultDict]
@@ -115,7 +119,7 @@ class BatchMachineTranslation:
     accounting_key = "external"
     force_uncleanup = False
     hightlight_syntax = False
-    settings_form: None | type[BaseMachineryForm] = None
+    settings_form: type[BaseMachineryForm] | None = None
     request_timeout = 5
     is_available = True
     replacement_start = "[X"
@@ -131,7 +135,7 @@ class BatchMachineTranslation:
         self.rate_limit_cache = f"{self.mtid}-rate-limit"
         self.languages_cache = f"{self.mtid}-languages"
         self.comparer = Comparer()
-        self.supported_languages_error: None | Exception = None
+        self.supported_languages_error: Exception | None = None
         self.supported_languages_error_age: float = 0
         self.settings = settings
 
@@ -184,7 +188,7 @@ class BatchMachineTranslation:
         """Add authentication headers to request."""
         return {}
 
-    def get_auth(self) -> None | tuple[str, str] | AuthBase:
+    def get_auth(self) -> tuple[str, str] | AuthBase | None:
         return None
 
     def check_failure(self, response) -> None:
@@ -291,7 +295,7 @@ class BatchMachineTranslation:
         return exc.response.status_code in {456, 429, 401, 403, 503}
 
     def get_cache_key(
-        self, scope: str, *, parts: Iterable[str | int] = (), text: None | str = None
+        self, scope: str, *, parts: Iterable[str | int] = (), text: str | None = None
     ) -> str:
         """
         Cache key for caching translations.
@@ -327,14 +331,14 @@ class BatchMachineTranslation:
         return re.escape(text[:-1]) + " *" + re.escape(text[-1:])
 
     def format_replacement(
-        self, h_start: int, h_end: int, h_text: str, h_kind: None | Unit
+        self, h_start: int, h_end: int, h_text: str, h_kind: Unit | None
     ) -> str:
         """Generate a single replacement."""
         return f"{self.replacement_start}{h_start}{self.replacement_end}"
 
     def get_highlights(
         self, text: str, unit
-    ) -> Iterable[tuple[int, int, str, None | Unit]]:
+    ) -> Iterable[tuple[int, int, str, Unit | None]]:
         for h_start, h_end, h_text in highlight_string(
             text, unit, hightlight_syntax=self.hightlight_syntax
         ):
@@ -388,7 +392,8 @@ class BatchMachineTranslation:
         self, source_language: Language, target_language: Language
     ) -> tuple[str, str]:
         if source_language == target_language and not self.same_languages:
-            raise UnsupportedLanguageError("Same languages")
+            msg = "Same languages"
+            raise UnsupportedLanguageError(msg)
 
         for source in self.get_language_possibilities(source_language):
             for target in self.get_language_possibilities(target_language):
@@ -401,7 +406,8 @@ class BatchMachineTranslation:
             self.supported_languages_error = None
             self.supported_languages_error_age = 0
 
-        raise UnsupportedLanguageError("Not supported")
+        msg = "Not supported"
+        raise UnsupportedLanguageError(msg)
 
     def get_cached(self, source, language, text, threshold, replacements):
         if not self.cache_translations:
@@ -414,7 +420,7 @@ class BatchMachineTranslation:
             self.uncleanup_results(replacements, result)
         return cache_key, result
 
-    def search(self, unit, text, user: User):
+    def search(self, unit, text, user: User | None):
         """Search for known translations of `text`."""
         translation = unit.translation
         try:
@@ -665,7 +671,7 @@ class InternalMachineTranslation(MachineTranslation):
         """Disable rate limiting."""
         return False
 
-    def get_language_possibilities(self, language: Language) -> Iterator[Language]:
+    def get_language_possibilities(self, language: Language) -> Iterator[Language]:  # type: ignore[override]
         yield get_machinery_language(language)
 
 
@@ -706,7 +712,7 @@ class GlossaryMachineTranslationMixin(MachineTranslation):
     ) -> None:
         raise NotImplementedError
 
-    def get_glossaries(self, use_cache: bool = True):
+    def get_glossaries(self, use_cache: bool = True) -> dict[str, str]:
         cache_key = self.get_cache_key("glossaries")
         if use_cache:
             cached = cache.get(cache_key)
@@ -720,7 +726,7 @@ class GlossaryMachineTranslationMixin(MachineTranslation):
 
     def get_glossary_id(
         self, source_language: str, target_language: str, unit: Unit | None
-    ) -> int | str | None:
+    ) -> str | None:
         from weblate.glossary.models import get_glossary_tsv
 
         if unit is None:
@@ -796,8 +802,9 @@ class GlossaryMachineTranslationMixin(MachineTranslation):
         return re.match(self.glossary_name_format_pattern, string)
 
 
-class XMLMachineTranslationMixin:
+class XMLMachineTranslationMixin(BatchMachineTranslation):
     hightlight_syntax = True
+    force_uncleanup = True
 
     def unescape_text(self, text: str) -> str:
         """Unescaping of the text with replacements."""
@@ -808,7 +815,7 @@ class XMLMachineTranslationMixin:
         return escape(text)
 
     def format_replacement(
-        self, h_start: int, h_end: int, h_text: str, h_kind: None | Unit
+        self, h_start: int, h_end: int, h_text: str, h_kind: Unit | None
     ) -> str:
         """Generate a single replacement."""
         raise NotImplementedError

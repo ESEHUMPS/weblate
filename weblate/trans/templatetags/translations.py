@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from datetime import date, datetime
+from html import escape as html_escape
 from typing import TYPE_CHECKING
 
 from django import forms, template
@@ -252,8 +253,8 @@ class Formatter:
         translations = []
         for term in terms:
             flags = term.all_flags
-            target = escape(term.target)
-            source = escape(term.source)
+            target = html_escape(term.target)
+            source = html_escape(term.source)
             # Translators: Glossary term formatting used in a tooltip
             formatted = pgettext("glossary term", "{target} [{source}]").format(
                 source=source, target=target
@@ -397,7 +398,7 @@ class Formatter:
                 was_cr = is_cr
                 output.append(newline)
             else:
-                output.append(escape(char))
+                output.append(html_escape(char))
         # Trailing tags
         output.append("".join(tags[len(value)]))
         return mark_safe("".join(output))  # noqa: S308
@@ -744,7 +745,9 @@ def naturaltime_future(value, now):
 
 
 @register.filter(is_safe=True)
-def naturaltime(value, now=None):
+def naturaltime(
+    value: float | datetime, microseconds: bool = False, *, now: datetime | None = None
+):
     """
     Heavily based on Django's django.contrib.humanize implementation of naturaltime.
 
@@ -768,7 +771,7 @@ def naturaltime(value, now=None):
         text = naturaltime_future(value, now)
 
     # Strip microseconds
-    if isinstance(value, datetime):
+    if isinstance(value, datetime) and not microseconds:
         value = value.replace(microsecond=0)
 
     return format_html('<span title="{}">{}</span>', value.isoformat(), text)
@@ -1119,9 +1122,9 @@ def indicate_alerts(
 ):
     result: list[tuple[str, StrOrPromise, str | None]] = []
 
-    translation: None | Translation | GhostTranslation = None
-    component: None | Component = None
-    project: None | Project = None
+    translation: Translation | GhostTranslation | None = None
+    component: Component | None = None
+    project: Project | None = None
 
     global_base = context.get("global_base")
 
@@ -1362,7 +1365,8 @@ def get_breadcrumbs(path_object, flags: bool = True):
         )
         yield path_object.get_absolute_url(), path_object.language
     else:
-        raise TypeError(f"No breadcrumbs for {path_object}")
+        msg = f"No breadcrumbs for {path_object}"
+        raise TypeError(msg)
 
 
 @register.simple_tag
