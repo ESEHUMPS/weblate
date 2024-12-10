@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import os.path
+from collections import UserDict
 from datetime import datetime
 from operator import itemgetter
 from typing import TYPE_CHECKING
@@ -48,8 +49,9 @@ if TYPE_CHECKING:
     from weblate.trans.models.translation import TranslationQuerySet
 
 
-class ProjectLanguageFactory(dict):
+class ProjectLanguageFactory(UserDict):
     def __init__(self, project: Project) -> None:
+        super().__init__()
         self._project = project
 
     def __getitem__(self, key: Language):
@@ -320,7 +322,7 @@ class Project(models.Model, PathMixin, CacheKeyMixin):
         self.stats = ProjectStats(self)
         self.acting_user: User | None = None
         self.project_languages = ProjectLanguageFactory(self)
-        self.label_cleanups: None | TranslationQuerySet = None
+        self.label_cleanups: TranslationQuerySet | None = None
         self.languages_cache: dict[str, Language] = {}
 
     def generate_changes(self, old) -> None:

@@ -232,7 +232,8 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
         filename = self.get_filename()
         if filename is None:
             # Should not actually happen
-            raise ValidationError("Translation without a filename!")
+            msg = "Translation without a filename!"
+            raise ValidationError(msg)
         if not os.path.exists(filename):
             raise ValidationError(
                 gettext(
@@ -268,7 +269,7 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
     def get_translate_url(self):
         return reverse("translate", kwargs={"path": self.get_url_path()})
 
-    def get_filename(self) -> None | str:
+    def get_filename(self) -> str | None:
         """Return absolute filename."""
         if not self.filename:
             return None
@@ -285,7 +286,8 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
             if fileobj is None:
                 fileobj = self.get_filename()
                 if fileobj is None:
-                    raise ValueError("Attempt to parse store without a filename.")
+                    msg = "Attempt to parse store without a filename."
+                    raise ValueError(msg)
             elif self.is_template:
                 template = self.component.load_template_store(
                     NamedBytesIO(fileobj.name, fileobj.read())
@@ -725,7 +727,7 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
 
         return True
 
-    def update_units(
+    def update_units(  # noqa: C901
         self,
         units: Iterable[Unit],
         store: TranslationFormat,
@@ -755,6 +757,17 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
                 )
                 pounit.set_explanation(unit.explanation)
                 pounit.set_source_explanation(unit.source_unit.explanation)
+                # Check if context has changed while adding to storage
+                if pounit.context != unit.context:
+                    if self.is_source:
+                        # Update all matching translations
+                        Unit.objects.filter(
+                            context=unit.context, translation__component=self.component
+                        ).update(context=pounit.context)
+                    else:
+                        # Update this unit only
+                        Unit.objects.filter(pk=unit.pk).update(context=pounit.context)
+                    unit.context = pounit.context
                 updated = True
                 del details["add_unit"]
             else:
@@ -763,10 +776,16 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
                 except UnitNotFoundError:
                     # Bail out if we have not found anything
                     report_error("String disappeared", project=self.component.project)
-                    self.log_error(
-                        "string %s disappeared from the file, removing", unit
+                    # TODO: once we have a deeper stack of pending changes,
+                    # this should be kept as pending, so that the changes are not lost
+                    unit.state = STATE_FUZZY
+                    # Use update instead of hitting expensive save()
+                    Unit.objects.filter(pk=unit.pk).update(state=STATE_FUZZY)
+                    unit.change_set.create(
+                        action=Change.ACTION_SAVE_FAILED,
+                        target="Could not find string in the translation file",
                     )
-                    unit.delete()
+                    clear_pending.append(unit.pk)
                     continue
 
                 # Optionally add unit to translation file.
@@ -1433,7 +1452,7 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
         return result
 
     @transaction.atomic
-    def add_unit(  # noqa: C901
+    def add_unit(  # noqa: C901,PLR0914
         self,
         request,
         context: str,
@@ -1455,7 +1474,8 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
         component = self.component
         add_terminology = False
         if is_plural(source) and not component.file_format_cls.supports_plural:
-            raise ValueError("Plurals not supported by format!")
+            msg = "Plurals not supported by format!"
+            raise ValueError(msg)
 
         if self.is_source:
             translations = (
@@ -1624,7 +1644,9 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
             for translation in self.get_store_change_translations():
                 # Does unit exist here?
                 try:
-                    translation_unit = translation.unit_set.get(id_hash=unit.id_hash)
+                    translation_unit = translation.unit_set.select_for_update().get(
+                        id_hash=unit.id_hash
+                    )
                 except ObjectDoesNotExist:
                     continue
                 # Delete the removed unit from the database
@@ -1759,6 +1781,16 @@ class Translation(models.Model, URLMixin, LoggerMixin, CacheKeyMixin):
         """Return blank source fields for pluralized new string."""
         return [""] * self.plural.number
 
+    def can_be_deleted(self) -> bool:
+        """
+        Check if a glossary can be deleted.
+
+        It is possible to delete a glossary if:
+        - it has no translations
+        - it is managed by Weblate (i.e. repo == 'local:')
+        """
+        return self.stats.translated == 0 and self.component.repo == "local:"
+
 
 class GhostTranslation:
     """Ghost translation object used to show missing translations."""
@@ -1775,5 +1807,5 @@ class GhostTranslation:
     def __str__(self) -> str:
         return f"{self.component} — {self.language}"
 
-    def get_absolute_url(self) -> None:
-        return None
+    def get_absolute_url(self) -> str:
+        return ""
