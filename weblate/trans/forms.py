@@ -9,7 +9,7 @@ import json
 import re
 from datetime import datetime
 from secrets import token_hex
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 from crispy_forms.bootstrap import InlineCheckboxes, InlineRadios, Tab, TabHolder
 from crispy_forms.helper import FormHelper
@@ -94,7 +94,7 @@ if TYPE_CHECKING:
     from weblate.trans.models.translation import NewUnitParams
 
 BUTTON_TEMPLATE = """
-<button class="btn btn-default {0}" title="{1}" {2}>{3}</button>
+<button type="button" class="btn btn-default {0}" title="{1}" {2}>{3}</button>
 """
 RADIO_TEMPLATE = """
 <label class="btn btn-default {0}" title="{1}">
@@ -450,7 +450,7 @@ class ChecksumForm(forms.Form):
         self.unit_set = unit_set
         super().__init__(*args, **kwargs)
 
-    def clean_checksum(self) -> None | str:
+    def clean_checksum(self) -> str | None:
         """Validate whether checksum is valid and fetches unit for it."""
         if "checksum" not in self.cleaned_data:
             return None
@@ -1346,7 +1346,8 @@ class ReportsForm(forms.Form):
                 translation__component=scope["component"]
             ).exclude(pk=scope["component"].source_language_id)
         else:
-            raise ValueError(f"Invalid scope: {scope}")
+            msg = f"Invalid scope: {scope}"
+            raise ValueError(msg)
         self.fields["language"].choices += languages.as_choices()
 
     def clean(self) -> None:
@@ -1429,28 +1430,25 @@ class ProjectDocsMixin(FieldDocsMixin):
 
 
 class SpamCheckMixin(forms.Form):
-    def spam_check(self, value) -> None:
-        if is_spam(value, self.request):
-            raise ValidationError(gettext("This field has been identified as spam!"))
+    spam_fields: ClassVar[tuple[str, ...]]
+
+    def clean(self) -> None:
+        data = self.cleaned_data
+        check_values: list[str] = [
+            data[field] for field in self.spam_fields if field in data
+        ]
+        if is_spam(self.request, check_values):
+            raise ValidationError(
+                gettext("This submission has been identified as spam!")
+            )
 
 
 class ComponentAntispamMixin(SpamCheckMixin):
-    def clean_agreement(self):
-        value = self.cleaned_data["agreement"]
-        self.spam_check(value)
-        return value
+    spam_fields = ("agreement",)
 
 
 class ProjectAntispamMixin(SpamCheckMixin):
-    def clean_web(self):
-        value = self.cleaned_data["web"]
-        self.spam_check(value)
-        return value
-
-    def clean_instructions(self):
-        value = self.cleaned_data["instructions"]
-        self.spam_check(value)
-        return value
+    spam_fields = ("web", "instructions")
 
 
 class ComponentSettingsForm(
@@ -1663,6 +1661,12 @@ class ComponentSettingsForm(
 
 class ComponentCreateForm(SettingsBaseForm, ComponentDocsMixin, ComponentAntispamMixin):
     """Component creation form."""
+
+    source_component = forms.ModelChoiceField(
+        queryset=Component.objects.none(),
+        required=False,
+        widget=forms.HiddenInput(),
+    )
 
     class Meta:
         model = Component
@@ -1945,8 +1949,8 @@ class ComponentDiscoverForm(ComponentInitCreateForm):
         widget=forms.HiddenInput,
     )
 
-    def render_choice(self, value):
-        context = copy.copy(value)
+    def render_choice(self, value: DiscoveryResult) -> str:
+        context = value.data.copy()
         try:
             format_cls = FILE_FORMATS[value["file_format"]]
             context["file_format_name"] = format_cls.name
@@ -1987,7 +1991,7 @@ class ComponentDiscoverForm(ComponentInitCreateForm):
                 discovered = self.discover(eager=True)
         except ValidationError:
             discovered = []
-        request.session["create_discovery"] = discovered
+        request.session["create_discovery"] = [x.data for x in discovered]
         request.session["create_discovery_meta"] = [x.meta for x in discovered]
         return discovered
 
@@ -2595,6 +2599,7 @@ class BulkEditForm(forms.Form):
         label=gettext_lazy("State to set"),
         choices=[(-1, gettext_lazy("Do not change"))],
     )
+    path = forms.CharField(widget=forms.HiddenInput, required=False)
     add_flags = FlagField(
         label=gettext_lazy("Translation flags to add"), required=False
     )
@@ -2614,9 +2619,13 @@ class BulkEditForm(forms.Form):
         required=False,
     )
 
-    def __init__(self, user: User | None, obj, *args, **kwargs) -> None:
+    def __init__(
+        self, user: User | None, obj: URLMixin | None, *args, **kwargs
+    ) -> None:
         project = kwargs.pop("project", None)
         kwargs["auto_id"] = "id_bulk_%s"
+        if obj is not None:
+            kwargs["initial"] = {"path": obj.full_slug}
         super().__init__(*args, **kwargs)
         labels = Label.objects.all() if project is None else project.label_set.all()
         if labels:
@@ -2631,6 +2640,10 @@ class BulkEditForm(forms.Form):
 
         # Filter offered states
         choices = self.fields["state"].choices
+
+        # Special case for list_addons
+        if isinstance(obj, Component) and obj.pk == -1:
+            show_review = False
         choices.extend(
             (state, get_state_label(state, label, show_review))
             for state, label in StringState.choices
@@ -2643,6 +2656,7 @@ class BulkEditForm(forms.Form):
         self.helper.layout = Layout(
             Div(template="snippets/bulk-help.html"),
             SearchField("q"),
+            Field("path"),
             Field("state"),
             Field("add_flags"),
             Field("remove_flags"),
@@ -2976,14 +2990,15 @@ class WorkflowSettingForm(FieldDocsMixin, forms.ModelForm):
             ),
         )
 
-    def clean_translation_review(self) -> None | bool:
+    def clean_translation_review(self) -> bool | None:
         if "translation_review" not in self.cleaned_data:
             return None
         translation_review = self.cleaned_data["translation_review"]
         if not self.project:
             return translation_review
         if translation_review and not self.project.enable_review:
-            raise ValidationError("Please turn on reviews on the project first.")
+            msg = "Please turn on reviews on the project first."
+            raise ValidationError(msg)
         return translation_review
 
     def save(self, commit: bool = True):

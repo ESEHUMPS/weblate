@@ -29,6 +29,7 @@ from packaging.version import Version
 from .celery import is_celery_queue_long
 from .checks import weblate_check
 from .classloader import ClassLoader
+from .const import HEARTBEAT_FREQUENCY
 from .data import data_dir
 from .db import (
     MySQLSearchLookup,
@@ -155,7 +156,11 @@ def check_celery(
     heartbeat = cache.get("celery_heartbeat")
     loaded = cache.get("celery_loaded")
     now = time.time()
-    if loaded and now - loaded > 60 and (not heartbeat or now - heartbeat > 600):
+    if (
+        loaded
+        and now - loaded > HEARTBEAT_FREQUENCY
+        and (not heartbeat or now - heartbeat > HEARTBEAT_FREQUENCY * 10)
+    ):
         errors.append(
             weblate_check(
                 "weblate.C030",
@@ -186,7 +191,7 @@ def check_database(
 
     try:
         delta = measure_database_latency()
-        if delta > 100:
+        if delta > 120:
             errors.append(
                 weblate_check(
                     "weblate.C038",
@@ -215,7 +220,7 @@ def check_cache(
     """Check for sane caching."""
     errors = []
 
-    cache_backend = cast(str, settings.CACHES["default"]["BACKEND"]).split(".")[-1]
+    cache_backend = cast("str", settings.CACHES["default"]["BACKEND"]).split(".")[-1]
     if cache_backend not in GOOD_CACHE:
         errors.append(
             weblate_check(
@@ -497,8 +502,8 @@ class UtilsConfig(AppConfig):
                 (Regex, "trgm_regex"),
             ]
 
-        lookups.append((cast(type[Lookup], MD5),))
-        lookups.append((cast(type[Lookup], Lower),))
+        lookups.append((cast("type[Lookup]", MD5),))
+        lookups.append((cast("type[Lookup]", Lower),))
 
         for lookup in lookups:
             CharField.register_lookup(*lookup)

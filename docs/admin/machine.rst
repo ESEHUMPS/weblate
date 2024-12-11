@@ -22,6 +22,8 @@ the project settings:
 The services translate from the source language as configured at
 :ref:`component`, see :ref:`component-source_language`.
 
+Per-project automatic suggestion can also be configured via the :ref:`api`.
+
 .. seealso::
 
    :ref:`machine-translation`
@@ -241,6 +243,8 @@ Google Cloud Translation Advanced
                 +-----------------+---------------------------------------+----------------------------------------------------------------------------------------------------------+
                 | ``location``    | Google Translate location             | Choose a Google Cloud Translation region that is used for the Google Cloud project or is closest to you. |
                 +-----------------+---------------------------------------+----------------------------------------------------------------------------------------------------------+
+                | ``bucket_name`` | Google Storage Bucket name            | Enter the name of the Google Cloud Storage bucket that is used to store the Glossary files.              |
+                +-----------------+---------------------------------------+----------------------------------------------------------------------------------------------------------+
 
 Machine translation service provided by the Google Cloud services.
 
@@ -255,8 +259,20 @@ In order to use this service, you first need to go through the following steps:
 
 .. _Select or create a Cloud Platform project.: https://console.cloud.google.com/project
 .. _Enable billing for your project.: https://cloud.google.com/billing/docs/how-to/modify-project#enable_billing_for_a_project
-.. _Enable the Cloud Translation.:  https://cloud.google.com/translate/docs/
+.. _Enable the Cloud Translation.: https://cloud.google.com/translate/docs/
 .. _Setup Authentication.: https://googleapis.dev/python/google-api-core/latest/auth.html
+
+
+Optionally, you can configure the service to use :ref:`glossary` by setting up a Bucket:
+
+1. `Create a Google Cloud bucket.`_
+2. `Set bucket location to "us-central1".`_
+3. `Grant 'Storage Admin' permission to the Service Account.`_
+
+.. _Create a Google Cloud bucket.: https://cloud.google.com/storage/docs/creating-buckets
+.. _Set bucket location to "us-central1".: https://cloud.google.com/translate/docs/migrate-to-v3#resources_projects_and_locations
+.. _Grant 'Storage Admin' permission to the Service Account.: https://cloud.google.com/translate/docs/access-control
+
 
 .. seealso::
 
@@ -575,8 +591,8 @@ addition to the term database.
 
 .. seealso::
 
-    `SAP Translation Hub API <https://api.sap.com/shell/discover/contentpackage/SAPTranslationHub/api/translationhub>`_,
-    `Building the Base URL of SAP Translation Hub <https://help.sap.com/docs/SAP_TRANSLATION_HUB/ed6ce7a29bdd42169f5f0d7868bce6eb/3a011fba82644259a2cc3c919863f4b4.html>`_
+    * `What is SAP Translation Hub <https://help.sap.com/docs/translation-hub/sap-translation-hub/what-is-sap-translation-hub>`_
+    * `SAP Translation Hub API <https://api.sap.com/api/translationhub/overview>`_
 
 .. _mt-systran:
 
@@ -642,7 +658,7 @@ Weblate
 
 Weblate machine translation service can provide translations based
 on the exact matches of a string in the currently existing strings
-in a  :guilabel:`Translated`, :guilabel:`Approved`,
+in a :guilabel:`Translated`, :guilabel:`Approved`,
 or :guilabel:`Read-only` :ref:`states <states>` inside Weblate.
 
 .. _mt-weblate-translation-memory:

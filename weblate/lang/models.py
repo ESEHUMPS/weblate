@@ -472,7 +472,10 @@ class LanguageManager(models.Manager.from_queryset(LanguageQuerySet)):
 
         # Invalidate cache, we might change languages
         self.flush_object_cache()
-        languages = {language.code: language for language in self.prefetch()}
+        languages = {
+            language.code: language
+            for language in self.prefetch().iterator(chunk_size=1000)
+        }
         plurals: dict[str, dict[int, list[Plural]]] = {}
         # Create Weblate languages
         for code, name, nplurals, plural_formula in LANGUAGES:
@@ -506,7 +509,7 @@ class LanguageManager(models.Manager.from_queryset(LanguageQuerySet)):
 
             # Fetch existing plurals
             plurals[code] = defaultdict(list)
-            for plural in lang.plural_set.iterator():
+            for plural in lang.plural_set.all():
                 plurals[code][plural.source].append(plural)
 
             if Plural.SOURCE_DEFAULT in plurals[code]:
@@ -596,7 +599,8 @@ class LanguageManager(models.Manager.from_queryset(LanguageQuerySet)):
                 language = plural.language
                 newtype = get_plural_type(language.base_code, plural.formula)
                 if newtype == data.PLURAL_UNKNOWN:
-                    raise ValueError(f"Invalid plural type of {plural.formula}")
+                    msg = f"Invalid plural type of {plural.formula}"
+                    raise ValueError(msg)
                 if newtype != plural.type:
                     plural.type = newtype
                     plural.save(update_fields=["type"])
@@ -656,7 +660,7 @@ class Language(models.Model, CacheKeyMixin):
             self.direction = self.guess_direction()
         return super().save(*args, **kwargs)
 
-    def get_absolute_url(self):
+    def get_absolute_url(self) -> str:
         return reverse("show_language", kwargs={"lang": self.code})
 
     def get_url_path(self):
@@ -873,7 +877,7 @@ class Plural(models.Model):
         self.type = get_plural_type(self.language.base_code, self.formula)
         super().save(*args, **kwargs)
 
-    def get_absolute_url(self):
+    def get_absolute_url(self) -> str:
         return "{}#information".format(
             reverse("show_language", kwargs={"lang": self.language.code})
         )
@@ -887,9 +891,8 @@ class Plural(models.Model):
         try:
             return c2py(self.formula or "0")
         except ValueError as error:
-            raise ValueError(
-                f"Could not compile formula {self.formula!r}: {error}"
-            ) from error
+            msg = f"Could not compile formula {self.formula!r}: {error}"
+            raise ValueError(msg) from error
 
     @cached_property
     def examples(self) -> dict[int, list[str]]:
@@ -909,7 +912,8 @@ class Plural(models.Model):
     def parse_plural_forms(plurals):
         matches = PLURAL_RE.match(plurals)
         if matches is None:
-            raise ValueError("Could not parse plural forms")
+            msg = "Could not parse plural forms"
+            raise ValueError(msg)
 
         number = int(matches.group(1))
         formula = matches.group(2)
@@ -1054,13 +1058,11 @@ class PluralMapper:
 
     def zip(self, sources: list[str], targets: list[str], unit: Unit):
         if len(sources) != self.source_plural.number:
-            raise ValueError(
-                "length of `sources` doesn't match the number of source plurals"
-            )
+            msg = "length of `sources` doesn't match the number of source plurals"
+            raise ValueError(msg)
         if len(targets) != self.target_plural.number:
-            raise ValueError(
-                "length of `targets` doesn't match the number of target plurals"
-            )
+            msg = "length of `targets` doesn't match the number of target plurals"
+            raise ValueError(msg)
         if self.same_plurals:
             return zip(sources, targets, strict=True)
         return [

@@ -241,7 +241,7 @@ class TTKitFormat(TranslationFormat):
     set_context_bilingual = True
     # Use settarget/setsource to set language as well
     use_settarget = False
-    force_encoding: None | str = None
+    force_encoding: str | None = None
     plural_preference: tuple[int, ...] | None = (
         Plural.SOURCE_CLDR,
         Plural.SOURCE_DEFAULT,
@@ -461,7 +461,8 @@ class TTKitFormat(TranslationFormat):
             with open(filename, "wb") as output:
                 output.write(cls.get_new_file_content())
         else:
-            raise ValueError("Not supported")
+            msg = "Not supported"
+            raise ValueError(msg)
 
     @classmethod
     def is_valid_base_for_new(
@@ -541,9 +542,8 @@ class PoUnit(TTKitUnit):
         try:
             flags = Flags(*self.mainunit.typecomments)
         except ParseException as error:
-            raise ValueError(
-                f"Could not parse flags: {self.mainunit.typecomments!r}: {error}"
-            ) from error
+            msg = f"Could not parse flags: {self.mainunit.typecomments!r}: {error}"
+            raise ValueError(msg) from error
         flags.remove({"fuzzy"})
         return flags.format()
 
@@ -1186,7 +1186,8 @@ class PoFormat(BasePoFormat, BilingualUpdateMixin):
             template,
         ]
         if kwargs:
-            raise ValueError(f"Unsupported arguments: {kwargs!r}")
+            msg = f"Unsupported arguments: {kwargs!r}"
+            raise ValueError(msg)
 
         try:
             result = subprocess.run(
@@ -1199,9 +1200,8 @@ class PoFormat(BasePoFormat, BilingualUpdateMixin):
             )
         except FileNotFoundError as error:
             report_error("Failed msgmerge")
-            raise UpdateError(
-                "msgmerge not found, please install gettext", error
-            ) from error
+            msg = "msgmerge not found, please install gettext"
+            raise UpdateError(msg, error) from error
         except OSError as error:
             report_error("Failed msgmerge")
             raise UpdateError(" ".join(cmd), error) from error
@@ -1629,7 +1629,7 @@ class CSVFormat(TTKitFormat):
                 content = handle.read()
         return content, filename
 
-    def parse_store(self, storefile, *, dialect: None | str = None):
+    def parse_store(self, storefile, *, dialect: str | None = None):
         """Parse the store."""
         content, filename = self.get_content_and_filename(storefile)
 
@@ -1660,7 +1660,7 @@ class CSVFormat(TTKitFormat):
 
         return self.parse_simple_csv(content, filename, header=header)
 
-    def parse_simple_csv(self, content, filename, header: None | list[str] = None):
+    def parse_simple_csv(self, content, filename, header: list[str] | None = None):
         fieldnames = ["source", "target"]
         if header and all(
             field in {"source", "target", "context", "id"} for field in header
@@ -1747,6 +1747,7 @@ class DTDFormat(TTKitFormat):
     autoload: tuple[str, ...] = ("*.dtd",)
     unit_class = MonolingualSimpleUnit
     new_translation = "\n"
+    can_add_unit: bool = False
 
     @staticmethod
     def mimetype() -> str:
@@ -1921,7 +1922,7 @@ class XWikiUnit(PropertiesUnit):
         # translate.storage.properties.propunit.gettarget
         # which for some reason does not return translation
         value = quote.xwiki_properties_decode(self.unit.value)
-        value = re.sub("\\\\ ", " ", value)
+        value = re.sub(r"\\ ", " ", value)
         return get_string(value)
 
 
@@ -2085,7 +2086,7 @@ class TBXFormat(TTKitFormat):
 
 
 class PropertiesMi18nFormat(PropertiesUtf8Format):
-    name = gettext_lazy("mi18n lang file")
+    name = gettext_lazy("@draggable/i18n lang file")
     format_id = "mi18n-lang"
     new_translation = "\n"
     language_format = "bcp_legacy"

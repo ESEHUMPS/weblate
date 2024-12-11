@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from datetime import date, datetime
+from html import escape as html_escape
 from typing import TYPE_CHECKING
 
 from django import forms, template
@@ -121,7 +122,7 @@ class Formatter:
         self.search_match = search_match
         self.match = match
         # Tags output
-        self.tags: list[list[str]] = [[] for i in range(len(value) + 1)]
+        self.tags: dict[int, list[str]] = defaultdict(list)
         self.differ = Differ()
         self.whitespace = whitespace
 
@@ -159,20 +160,23 @@ class Formatter:
                 # Rearrange space highlighting
                 move_space = False
                 start_space = -1
-                for pos, tag in enumerate(self.tags[offset]):
-                    if tag == SPACE_MIDDLE_2:
-                        self.tags[offset][pos] = SPACE_MIDDLE_1
-                        move_space = True
-                        break
-                    if tag == SPACE_START:
-                        start_space = pos
-                        break
+                if offset in self.tags:
+                    for pos, tag in enumerate(self.tags[offset]):
+                        if tag == SPACE_MIDDLE_2:
+                            self.tags[offset][pos] = SPACE_MIDDLE_1
+                            move_space = True
+                            break
+                        if tag == SPACE_START:
+                            start_space = pos
+                            break
 
                 if start_space != -1:
                     self.tags[offset].insert(start_space, "<ins>")
                     last_middle = None
                     for i in range(len(data)):
                         tagoffset = offset + i + 1
+                        if tagoffset not in self.tags:
+                            continue
                         for pos, tag in enumerate(self.tags[tagoffset]):
                             if tag == SPACE_END:
                                 # Whitespace ends within <ins>
@@ -252,8 +256,8 @@ class Formatter:
         translations = []
         for term in terms:
             flags = term.all_flags
-            target = escape(term.target)
-            source = escape(term.source)
+            target = html_escape(term.target)
+            source = html_escape(term.source)
             # Translators: Glossary term formatting used in a tooltip
             formatted = pgettext("glossary term", "{target} [{source}]").format(
                 source=source, target=target
@@ -377,29 +381,61 @@ class Formatter:
         output = []
         was_cr = False
         newlines = {"\r", "\n"}
+        current: list[str]
+        whitespace = self.whitespace
+        previous_start = -1
         for pos, char in enumerate(value):
-            # Special case for single whitespace char in diff
-            if (
-                char == " "
-                and "<ins>" in tags[pos]
-                and SPACE_START not in tags[pos]
-                and "</ins>" in tags[pos + 1]
-            ):
-                tags[pos].append(SPACE_START)
-                tags[pos + 1].insert(0, SPACE_END)
+            if pos in tags:
+                current = tags[pos]
+                # Special case for single whitespace char in diff
+                if (
+                    current
+                    and char == " "
+                    and "<ins>" in current
+                    and SPACE_START not in current
+                    and "</ins>" in tags[pos + 1]
+                ):
+                    current.append(SPACE_START)
+                    tags[pos + 1].insert(0, SPACE_END)
 
-            output.append("".join(tags[pos]))
-            if char in newlines and self.whitespace:
+                if previous_start != -1:
+                    output.append(value[previous_start:pos])
+                    previous_start = -1
+                output.extend(current)
+
+            next_output = None
+            if whitespace and char in newlines:
                 is_cr = char == "\r"
                 if was_cr and not is_cr:
                     # treat "\r\n" as single newline
                     continue
                 was_cr = is_cr
-                output.append(newline)
-            else:
-                output.append(escape(char))
+                next_output = newline
+            # Replace special characters "&", "<" and ">" to HTML-safe sequences.
+            # This is like html.escape but inline and working on single character only.
+            elif char == "&":
+                next_output = "&amp;"
+            elif char == "<":
+                next_output = "&lt;"
+            elif char == ">":
+                next_output = "&gt;"
+            elif char == '"':
+                next_output = "&quot;"
+            elif char == "'":
+                next_output = "&#x27;"
+            if next_output is not None:
+                if previous_start != -1:
+                    output.append(value[previous_start:pos])
+                    previous_start = -1
+                output.append(next_output)
+            elif previous_start == -1:
+                previous_start = pos
+
+        if previous_start != -1:
+            output.append(value[previous_start:])
+
         # Trailing tags
-        output.append("".join(tags[len(value)]))
+        output.extend(tags[len(value)])
         return mark_safe("".join(output))  # noqa: S308
 
 
@@ -474,6 +510,7 @@ def format_source_string(
     return format_translation(
         plurals=[value],
         language=unit.translation.component.source_language,
+        plural=unit.translation.plural,
         search_match=search_match,
         match=match,
         simple=simple,
@@ -744,7 +781,9 @@ def naturaltime_future(value, now):
 
 
 @register.filter(is_safe=True)
-def naturaltime(value, now=None):
+def naturaltime(
+    value: float | datetime, microseconds: bool = False, *, now: datetime | None = None
+):
     """
     Heavily based on Django's django.contrib.humanize implementation of naturaltime.
 
@@ -768,7 +807,7 @@ def naturaltime(value, now=None):
         text = naturaltime_future(value, now)
 
     # Strip microseconds
-    if isinstance(value, datetime):
+    if isinstance(value, datetime) and not microseconds:
         value = value.replace(microsecond=0)
 
     return format_html('<span title="{}">{}</span>', value.isoformat(), text)
@@ -1119,9 +1158,9 @@ def indicate_alerts(
 ):
     result: list[tuple[str, StrOrPromise, str | None]] = []
 
-    translation: None | Translation | GhostTranslation = None
-    component: None | Component = None
-    project: None | Project = None
+    translation: Translation | GhostTranslation | None = None
+    component: Component | None = None
+    project: Project | None = None
 
     global_base = context.get("global_base")
 
@@ -1362,7 +1401,8 @@ def get_breadcrumbs(path_object, flags: bool = True):
         )
         yield path_object.get_absolute_url(), path_object.language
     else:
-        raise TypeError(f"No breadcrumbs for {path_object}")
+        msg = f"No breadcrumbs for {path_object}"
+        raise TypeError(msg)
 
 
 @register.simple_tag

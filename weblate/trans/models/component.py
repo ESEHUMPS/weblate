@@ -100,8 +100,8 @@ from weblate.utils.validators import (
     validate_re_nonempty,
     validate_slug,
 )
-from weblate.vcs.base import RepositoryError
-from weblate.vcs.git import LocalRepository
+from weblate.vcs.base import Repository, RepositoryError
+from weblate.vcs.git import GitMergeRequestBase, LocalRepository
 from weblate.vcs.models import VCS_REGISTRY
 from weblate.vcs.ssh import add_host_key
 
@@ -948,7 +948,7 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
         self.logs: list[str] = []
         self.translations_count: int | None = None
         self.translations_progress = 0
-        self.acting_user: None | User = None
+        self.acting_user: User | None = None
         self.batch_checks = False
         self.batched_checks: set[str] = set()
         self.needs_variants_update = False
@@ -1162,7 +1162,7 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
         language = self.source_language
         try:
             result = self.translation_set.select_related("plural").get(
-                language=self.source_language
+                language=language
             )
         except self.translation_set.model.DoesNotExist:
             try:
@@ -1181,7 +1181,7 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
                     pass
                 raise
         else:
-            result.language = self.source_language
+            result.language = language
             return result
 
     def preload_sources(self, sources=None) -> None:
@@ -1242,7 +1242,8 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
                 self.updated_sources[source.id] = source
             else:
                 # We are not supposed to create new one
-                raise Unit.DoesNotExist("Could not find source unit") from None
+                msg = "Could not find source unit"
+                raise Unit.DoesNotExist(msg) from None
 
             self._sources[id_hash] = source
             return source
@@ -1305,15 +1306,15 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
         return is_repo_link(self.repo)
 
     @property
-    def repository_class(self):
+    def repository_class(self) -> type[Repository]:
         return VCS_REGISTRY[self.vcs]
 
     @cached_property
-    def repository(self):
+    def repository(self) -> Repository:
         """Get VCS repository object."""
         if self.linked_component is not None:
             return self.linked_component.repository
-        return self.repository_class(self.full_path, self.branch, self)
+        return self.repository_class(self.full_path, branch=self.branch, component=self)
 
     @perform_on_link
     def get_last_remote_commit(self):
@@ -2094,7 +2095,8 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
         with self.start_sentry_span("commit_files"):
             if message is None:
                 if template is None:
-                    raise ValueError("Missing template when message is not specified")
+                    msg = "Missing template when message is not specified"
+                    raise ValueError(msg)
                 # Handle context
                 context = {"component": component or self, "author": author}
                 if extra_context:
@@ -2855,17 +2857,16 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
             except Exception as error:
                 errors.append(f"{match}: {error}")
         if errors:
-            raise ValidationError(
-                "{}\n{}".format(
-                    ngettext(
-                        "Could not parse %d matched file.",
-                        "Could not parse %d matched files.",
-                        len(errors),
-                    )
-                    % len(errors),
-                    "\n".join(errors),
+            msg = "{}\n{}".format(
+                ngettext(
+                    "Could not parse %d matched file.",
+                    "Could not parse %d matched files.",
+                    len(errors),
                 )
+                % len(errors),
+                "\n".join(errors),
             )
+            raise ValidationError(msg)
 
     def is_valid_base_for_new(self, errors: list | None = None, fast: bool = False):
         filename = self.get_new_base_filename()
@@ -3017,6 +3018,16 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
                 ) from error
             msg = gettext("Could not update repository: %s") % text
             raise ValidationError({"repo": msg}) from error
+
+        if (
+            issubclass(self.repository_class, GitMergeRequestBase)
+            and self.repo == self.push
+            and self.branch == self.push_branch
+        ):
+            msg = gettext(
+                "Pull and push branches cannot be the same when using merge requests."
+            )
+            raise ValidationError({"push_branch": msg})
 
     def clean(self) -> None:
         """
@@ -3552,7 +3563,7 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
         request,
         send_signal: bool = True,
         create_translations: bool = True,
-    ) -> None | Translation:
+    ) -> Translation | None:
         """Create new language file."""
         if not self.can_add_new_language(request.user if request else None):
             messages.error(request, self.new_lang_error_message, fail_silently=True)
@@ -3675,21 +3686,16 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
             perform_commit.delay(self.pk, "lock", None)
 
     @cached_property
-    def libre_license(self):
+    def libre_license(self) -> bool:
         return is_libre(self.license)
 
     @cached_property
-    def license_url(self):
+    def license_url(self) -> str:
         return get_license_url(self.license)
 
-    def get_license_display(self):
+    def get_license_display(self) -> str:
         # Override Django implementation as that rebuilds the dict every time
         return get_license_name(self.license)
-
-    @property
-    def license_badge(self):
-        """Simplified license short name to be used in badge."""
-        return self.license.replace("-or-later", "").replace("-only", "")
 
     def post_create(self, user: User) -> None:
         self.change_set.create(
@@ -3833,6 +3839,12 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
     def key_filter_re(self) -> re.Pattern:
         """Provide the cached version of key_filter."""
         return re.compile(self.key_filter)
+
+    def repository_status(self) -> str:
+        try:
+            return self.repository.status()
+        except RepositoryError as error:
+            return "{}\n\n{}".format(gettext("Could not get repository status!"), error)
 
 
 @receiver(m2m_changed, sender=Component.links.through)
