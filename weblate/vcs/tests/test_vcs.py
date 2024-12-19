@@ -10,7 +10,6 @@ import re
 import shutil
 import tempfile
 from typing import Any, NoReturn
-from unittest import SkipTest
 from unittest.mock import patch
 
 import responses
@@ -130,7 +129,7 @@ class VCSGitTest(TestCase, RepoTestMixin, TempDirMixin):
     def setUp(self) -> None:
         super().setUp()
         if not self._class.is_supported():
-            raise SkipTest("Not supported")
+            self.skipTest("Not supported")
 
         self.clone_test_repos()
 
@@ -164,7 +163,7 @@ class VCSGitTest(TestCase, RepoTestMixin, TempDirMixin):
         """Test repo workflow as used by Weblate."""
         with tempfile.TemporaryDirectory() as tempdir:
             repo = self._class(
-                tempdir, self._remote_branch, component=self.get_fake_component()
+                tempdir, branch=self._remote_branch, component=self.get_fake_component()
             )
             with repo.lock:
                 repo.configure_remote(
@@ -1031,7 +1030,7 @@ class VCSAzureDevOpsTest(VCSGitUpstreamTest):
     def test_fails_when_token_is_considered_invalid(self, branch: str = "") -> None:
         responses.add(
             method=responses.GET,
-            url=re.compile(".*"),
+            url=re.compile(r".*"),
             body="<html><head>Sign in please</head><body></body></html>",
             status=203,
         )
@@ -1872,35 +1871,35 @@ class VCSLocalTest(VCSGitTest):
         self.assertIn("On branch main", status)
 
     def test_upstream_changes(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
     def test_upstream_changes_rename(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
     def test_get_file(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
     def test_remove(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
     def test_needs_push(self) -> None:
         self.test_commit()
         self.assertFalse(self.repo.needs_push())
 
     def test_reset(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
     def test_merge_conflict(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
     def test_rebase_conflict(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
     def test_configure_remote(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
     def test_configure_remote_no_push(self) -> NoReturn:
-        raise SkipTest("Not supported")
+        self.skipTest("Not supported")
 
 
 @override_settings(

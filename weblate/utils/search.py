@@ -4,19 +4,18 @@
 
 from __future__ import annotations
 
-import re
-from collections.abc import Callable
+import threading
 from datetime import datetime, timedelta
 from functools import lru_cache, reduce
 from itertools import chain
 from operator import and_, or_
-from typing import Any, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dateutil.parser import ParserError
 from dateutil.parser import parse as dateutil_parse
 from django.db import transaction
-from django.db.models import Q, Value
-from django.db.utils import DataError
+from django.db.models import F, Q, Value
+from django.db.utils import DataError, OperationalError
 from django.http import Http404
 from django.utils import timezone
 from django.utils.translation import gettext
@@ -46,6 +45,9 @@ from weblate.utils.state import (
 )
 from weblate.utils.stats import CategoryLanguage, ProjectLanguage
 from weblate.utils.views import parse_path
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 # Helper parsing objects
@@ -166,7 +168,8 @@ class BaseTermExpr:
             return True
         if ltext in {"no", "false", "off", "0"}:
             return False
-        raise ValueError(f"Invalid boolean value: {text}")
+        msg = f"Invalid boolean value: {text}"
+        raise ValueError(msg)
 
     @overload
     def convert_int(self, text: RangeExpr) -> tuple[int, int]: ...
@@ -249,29 +252,30 @@ class BaseTermExpr:
         second: int = 55,
         microsecond: int = 0,
     ) -> datetime | tuple[datetime, datetime]:
-        # Lazily import as this can be expensive
-        from dateparser import parse as dateparser_parse
-
         tzinfo = timezone.get_current_timezone()
 
-        # Attempts to parse the text using dateparser
-        # If the text is unparsable it will return None
-        result = dateparser_parse(text)
+        result: datetime | None
+
+        try:
+            # Here we inject 5:55:55 time and if that was not changed
+            # during parsing, we assume it was not specified while
+            # generating the query
+            result = dateutil_parse(
+                text,
+                default=timezone.now().replace(
+                    hour=hour, minute=minute, second=second, microsecond=microsecond
+                ),
+            )
+        except ParserError:
+            # Lazily import as this can be expensive
+            from dateparser import parse as dateparser_parse
+
+            # Attempts to parse the text using dateparser
+            # If the text is unparsable it will return None
+            result = dateparser_parse(text, locales=["en"])
         if not result:
-            try:
-                # Here we inject 5:55:55 time and if that was not changed
-                # during parsing, we assume it was not specified while
-                # generating the query
-                result = dateutil_parse(
-                    text,
-                    default=timezone.now().replace(
-                        hour=hour, minute=minute, second=second, microsecond=microsecond
-                    ),
-                )
-            except ParserError as error:
-                raise ValueError(
-                    gettext("Invalid timestamp: {}").format(error)
-                ) from error
+            msg = "Could not parse timestamp"
+            raise ValueError(msg)
 
         result = result.replace(
             hour=hour,
@@ -296,6 +300,9 @@ class BaseTermExpr:
         except KeyError:
             return Change.ACTION_STRINGS[text]
 
+    def convert_change_time(self, text: str) -> datetime | tuple[datetime, datetime]:
+        return self.convert_datetime(text)
+
     def field_name(self, field: str, suffix: str | None = None) -> str:
         if suffix is None:
             suffix = OPERATOR_MAP[self.operator]
@@ -317,7 +324,8 @@ class BaseTermExpr:
             if suffix not in {"substring", "iexact"}:
                 return f"{self.NONTEXT_FIELDS[field]}__{suffix}"
             return self.NONTEXT_FIELDS[field]
-        raise ValueError(f"Unsupported field: {field}")
+        msg = f"Unsupported field: {field}"
+        raise ValueError(msg)
 
     def convert_non_field(self) -> Q:
         raise NotImplementedError
@@ -331,7 +339,7 @@ class BaseTermExpr:
 
         # Field specific code
         field_method: Callable[[str, dict], Q] = cast(
-            Callable[[str, dict], Q], getattr(self, f"{field}_field", None)
+            "Callable[[str, dict], Q]", getattr(self, f"{field}_field", None)
         )
         if field_method is not None:
             return field_method(match, context)
@@ -342,13 +350,7 @@ class BaseTermExpr:
             match = convert_method(match)
 
         if isinstance(match, RegexExpr):
-            # Regullar expression
-            try:
-                re.compile(match.expr)
-            except re.error as error:
-                raise ValueError(
-                    gettext("Invalid regular expression: {}").format(error)
-                ) from error
+            # Regular expression
             from weblate.trans.models import Unit
 
             with transaction.atomic():
@@ -356,8 +358,11 @@ class BaseTermExpr:
                     Unit.objects.annotate(test=Value("")).filter(
                         test__trgm_regex=match.expr
                     ).exists()
-                except DataError as error:
-                    raise ValueError(str(error)) from error
+                except (DataError, OperationalError) as error:
+                    # PostgreSQL raises DataError, MySQL OperationalError
+                    raise ValueError(
+                        gettext("Invalid regular expression: {}").format(error)
+                    ) from error
             return Q(**{self.field_name(field, "trgm_regex"): match.expr})
 
         if isinstance(match, tuple):
@@ -382,10 +387,12 @@ class BaseTermExpr:
         return query
 
     def is_field(self, text: str, context: dict) -> Q:
-        raise ValueError(f"Unsupported is lookup: {text}")
+        msg = f"Unsupported is lookup: {text}"
+        raise ValueError(msg)
 
     def has_field(self, text: str, context: dict) -> Q:
-        raise ValueError(f"Unsupported has lookup: {text}")
+        msg = f"Unsupported has lookup: {text}"
+        raise ValueError(msg)
 
 
 class UnitTermExpr(BaseTermExpr):
@@ -463,7 +470,10 @@ class UnitTermExpr(BaseTermExpr):
         if text == "translation":
             return Q(state__gte=STATE_TRANSLATED)
         if text in {"variant", "shaping"}:
-            return Q(variant__isnull=False)
+            return Q(defined_variants__isnull=False) | (
+                ~Q(variant__variant_regex="")
+                & Q(context__regex=F("variant__variant_regex"))
+            )
         if text == "label":
             return Q(source_unit__labels__isnull=False) | Q(labels__isnull=False)
         if text == "context":
@@ -534,10 +544,8 @@ class UnitTermExpr(BaseTermExpr):
             )
         if isinstance(obj, Language):
             return Q(translation__language=obj)
-        raise TypeError(f"Unsupported path lookup: {obj}")
-
-    def convert_change_time(self, text: str) -> datetime | tuple[datetime, datetime]:
-        return self.convert_datetime(text)
+        msg = f"Unsupported path lookup: {obj}"
+        raise TypeError(msg)
 
     def convert_changed(self, text: str) -> datetime | tuple[datetime, datetime]:
         return self.convert_datetime(text)
@@ -591,6 +599,8 @@ class UserTermExpr(BaseTermExpr):
     PLAIN_FIELDS: set[str] = {"username", "full_name"}
     NONTEXT_FIELDS: dict[str, str] = {
         "joined": "date_joined",
+        "change_time": "change__timestamp",
+        "change_action": "change__action",
     }
     EXACT_FIELD_MAP: dict[str, str] = {
         "language": "profile__languages__code",
@@ -657,11 +667,12 @@ class SuperuserUserTermExpr(UserTermExpr):
         return super().is_field(text, context)
 
 
-PARSERS = {
+PARSERS: dict[Literal["unit", "user", "superuser"], ParserElement] = {
     "unit": build_parser(UnitTermExpr),
     "user": build_parser(UserTermExpr),
     "superuser": build_parser(SuperuserUserTermExpr),
 }
+PARSER_LOCK = threading.Lock()
 
 
 def parser_to_query(obj, context: dict) -> Q:
@@ -689,12 +700,18 @@ def parser_to_query(obj, context: dict) -> Q:
 
 
 @lru_cache(maxsize=512)
-def parse_string(text: str, parser: str) -> ParseResults:
+def parse_string(
+    text: str, parser: Literal["unit", "user", "superuser"]
+) -> ParseResults:
     if "\x00" in text:
-        raise ValueError("Invalid query string.")
-    return PARSERS[parser].parse_string(text, parse_all=True)
+        msg = "Invalid query string."
+        raise ValueError(msg)
+    with PARSER_LOCK:
+        return PARSERS[parser].parse_string(text, parse_all=True)
 
 
-def parse_query(text: str, parser: str = "unit", **context) -> Q:
+def parse_query(
+    text: str, parser: Literal["unit", "user", "superuser"] = "unit", **context
+) -> Q:
     parsed = parse_string(text, parser)
     return parser_to_query(parsed, context)

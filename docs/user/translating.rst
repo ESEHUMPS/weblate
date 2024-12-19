@@ -62,10 +62,10 @@ Comments
 --------
 
 Three types of comments can be posted:
+
 * for translations
 * for source strings
-* for reporting source string bugs when this functionality is turned on using
-:ref:`project-source_review`.
+* for reporting source string bugs when this functionality is turned on using :ref:`project-source_review`.
 
 Choose the suitable type for the topic you want to discuss.
 Source string comments are in any event good for providing feedback on
@@ -109,6 +109,8 @@ Source needs review
 .. seealso::
 
     :ref:`labels`
+
+.. _translating:
 
 Translating
 -----------
@@ -449,6 +451,8 @@ then click on any translation to open and edit it.
 
 The matrix view is also a very good starting point to find missing
 translations in different languages, and quickly add them from one view.
+
+.. _zen-mode:
 
 Zen Mode
 --------

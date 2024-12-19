@@ -199,13 +199,13 @@ In the Docker container this can be configured using
 
 The status of rate limiting is reported in following headers:
 
-+---------------------------+---------------------------------------------------+
-| ``X-RateLimit-Limit``     | Rate limiting limit of requests to perform        |
-+---------------------------+---------------------------------------------------+
-| ``X-RateLimit-Remaining`` | Remaining limit of requests                       |
-+---------------------------+---------------------------------------------------+
-| ``X-RateLimit-Reset``     | Number of seconds until ratelimit window resets   |
-+---------------------------+---------------------------------------------------+
++---------------------------+------------------------------------------------------+
+| ``X-RateLimit-Limit``     | Allowed number of requests to perform                |
++---------------------------+------------------------------------------------------+
+| ``X-RateLimit-Remaining`` | Remaining number of requests to perform              |
++---------------------------+------------------------------------------------------+
+| ``X-RateLimit-Reset``     | Number of seconds until the rate-limit window resets |
++---------------------------+------------------------------------------------------+
 
 .. versionchanged:: 4.1
 
@@ -265,6 +265,9 @@ Users
 
     Returns a list of users if you have permissions to see manage users. If not, then you get to see
     only your own details.
+
+    :query string username: Username to search for
+    :query int id: User ID to search for
 
     .. seealso::
 
@@ -1235,6 +1238,30 @@ Projects
     :>json string full_name: Full name of the contributor
     :>json string change_count: Number of changes done in the time range
 
+
+.. http:get:: /api/projects/{string:project}/machinery_settings/
+
+    .. versionadded:: 5.9
+
+    Returns automatic suggestion settings for a project, consisting of the configurations defined for each translation service installed.
+
+    :param project: Project URL slug
+    :type project: string
+    :>json object suggestion_settings: Configuration for all installed services.
+
+
+.. http:post:: /api/projects/{string:project}/machinery_settings/
+
+    .. versionadded:: 5.9
+
+    Create or update the service configuration for a project.
+
+    :param project: Project URL slug
+    :type project: string
+    :form string service: Service name
+    :form string configuration: Service configuration in JSON
+
+
 Components
 ++++++++++
 
@@ -1297,6 +1324,7 @@ Components
     :>json string suggestion_voting: :ref:`component-suggestion_voting`
     :>json string suggestion_autoaccept: :ref:`component-suggestion_autoaccept`
     :>json string push_on_commit: :ref:`component-push_on_commit`
+    :>json bool locked: Whether component is locked, this field is read-only; see :http:get:`/api/components/(string:project)/(string:component)/lock/`
     :>json string commit_pending_age: :ref:`component-commit_pending_age`
     :>json string auto_lock_error: :ref:`component-auto_lock_error`
     :>json string language_regex: :ref:`component-language_regex`
@@ -1308,7 +1336,7 @@ Components
     :>json string lock_url: URL to lock status; see :http:get:`/api/components/(string:project)/(string:component)/lock/`
     :>json string changes_list_url: URL to changes list; see :http:get:`/api/components/(string:project)/(string:component)/changes/`
     :>json string task_url: URL to a background task (if any); see :http:get:`/api/tasks/(str:uuid)/`
-    :>json string credits_url: URL to to list contributor credits; see :http:get:`/api/components/(string:project)/(string:component)/credits/`
+    :>json string credits_url: URL to list contributor credits; see :http:get:`/api/components/(string:project)/(string:component)/credits/`
 
     **Example JSON data:**
 
@@ -1465,7 +1493,7 @@ Components
     :param component: Component URL slug
     :type component: string
 
-.. http:get::  /api/components/(string:project)/(string:component)/changes/
+.. http:get:: /api/components/(string:project)/(string:component)/changes/
 
     Returns a list of component changes. This is essentially a component scoped
     :http:get:`/api/changes/` accepting same params.
@@ -1490,7 +1518,7 @@ Components
 
     :query string format: The archive format to use; If not specified, defaults to ``zip``; Supported formats: ``zip`` and ``zip:CONVERSION`` where ``CONVERSION`` is one of converters listed at :ref:`download`.
 
-.. http:get::  /api/components/(string:project)/(string:component)/screenshots/
+.. http:get:: /api/components/(string:project)/(string:component)/screenshots/
 
     Returns a list of component screenshots.
 
@@ -2128,8 +2156,7 @@ Units
 
 A `unit` is a single piece of a translation which pairs a source string with a
 corresponding translated string and also contains some related metadata. The
-term is derived from the `Translate Toolkit
-<http://docs.translatehouse.org/projects/translate-toolkit/en/latest/api/storage.html#translate.storage.base.TranslationUnit>`_
+term is derived from the :py:class:`tt:translate.storage.base.TranslationUnit` in Translate Toolkit
 and XLIFF.
 
 .. http:get:: /api/units/
@@ -2184,7 +2211,7 @@ and XLIFF.
     :>json timestamp timestamp: string age
     :>json timestamp last_updated: last string update
 
-.. http:patch::  /api/units/(int:id)/
+.. http:patch:: /api/units/(int:id)/
 
     .. versionadded:: 4.3
 
@@ -2198,7 +2225,7 @@ and XLIFF.
     :<json string extra_flags: Additional string flags, available on source units, see :ref:`custom-checks`
     :<json array labels: labels, available on source units
 
-.. http:put::  /api/units/(int:id)/
+.. http:put:: /api/units/(int:id)/
 
     .. versionadded:: 4.3
 
@@ -2212,7 +2239,7 @@ and XLIFF.
     :<json string extra_flags: Additional string flags, available on source units, see :ref:`custom-checks`
     :<json array labels: labels, available on source units
 
-.. http:delete::  /api/units/(int:id)/
+.. http:delete:: /api/units/(int:id)/
 
     .. versionadded:: 4.3
 
@@ -2615,12 +2642,12 @@ Metrics
     :>json int users: Number of users
     :>json int changes: Number of changes
     :>json int projects: Number of projects
-    :>json int components:  Number of components
-    :>json int translations:  Number of translations
-    :>json int languages:  Number of used languages
-    :>json int checks:  Number of triggered quality checks
-    :>json int configuration_errors:  Number of configuration errors
-    :>json int suggestions:  Number of pending suggestions
+    :>json int components: Number of components
+    :>json int translations: Number of translations
+    :>json int languages: Number of used languages
+    :>json int checks: Number of triggered quality checks
+    :>json int configuration_errors: Number of configuration errors
+    :>json int suggestions: Number of pending suggestions
     :>json object celery_queues: Lengths of Celery queues, see :ref:`celery`
     :>json string name: Configured server name
 

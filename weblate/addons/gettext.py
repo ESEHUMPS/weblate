@@ -15,11 +15,11 @@ from weblate.addons.events import AddonEvent
 from weblate.addons.forms import GenerateMoForm, GettextCustomizeForm, MsgmergeForm
 from weblate.formats.base import TranslationFormat, UpdateError
 from weblate.formats.exporters import MoExporter
-from weblate.formats.ttkit import BasePoFormat
 from weblate.utils.state import STATE_FUZZY, STATE_TRANSLATED
 
 if TYPE_CHECKING:
     from weblate.auth.models import User
+    from weblate.formats.ttkit import BasePoFormat
     from weblate.trans.models import Component, Translation
 
 
@@ -28,7 +28,9 @@ class GettextBaseAddon(BaseAddon):
 
 
 class GenerateMoAddon(GettextBaseAddon):
-    events = (AddonEvent.EVENT_PRE_COMMIT,)
+    events: set[AddonEvent] = {
+        AddonEvent.EVENT_PRE_COMMIT,
+    }
     name = "weblate.gettext.mo"
     verbose = gettext_lazy("Generate MO files")
     description = gettext_lazy(
@@ -61,7 +63,7 @@ class GenerateMoAddon(GettextBaseAddon):
 
 
 class UpdateLinguasAddon(GettextBaseAddon):
-    events = (AddonEvent.EVENT_POST_ADD, AddonEvent.EVENT_DAILY)
+    events: set[AddonEvent] = {AddonEvent.EVENT_POST_ADD, AddonEvent.EVENT_DAILY}
     name = "weblate.gettext.linguas"
     verbose = gettext_lazy("Update LINGUAS file")
     description = gettext_lazy(
@@ -154,7 +156,7 @@ class UpdateLinguasAddon(GettextBaseAddon):
 
 
 class UpdateConfigureAddon(GettextBaseAddon):
-    events = (AddonEvent.EVENT_POST_ADD, AddonEvent.EVENT_DAILY)
+    events: set[AddonEvent] = {AddonEvent.EVENT_POST_ADD, AddonEvent.EVENT_DAILY}
     name = "weblate.gettext.configure"
     verbose = gettext_lazy('Update ALL_LINGUAS variable in the "configure" file')
     description = gettext_lazy(
@@ -332,7 +334,7 @@ class GettextCustomizeAddon(GettextBaseAddon, StoreBaseAddon):
     def store_post_load(
         self, translation: Translation, store: TranslationFormat
     ) -> None:
-        cast(BasePoFormat, store).store.wrapper.width = int(
+        cast("BasePoFormat", store).store.wrapper.width = int(
             self.instance.configuration.get("width", 77)
         )
 
@@ -343,7 +345,9 @@ class GettextCustomizeAddon(GettextBaseAddon, StoreBaseAddon):
 
 
 class GettextAuthorComments(GettextBaseAddon):
-    events = (AddonEvent.EVENT_PRE_COMMIT,)
+    events: set[AddonEvent] = {
+        AddonEvent.EVENT_PRE_COMMIT,
+    }
     name = "weblate.gettext.authors"
     verbose = gettext_lazy("Contributors in comment")
     description = gettext_lazy(

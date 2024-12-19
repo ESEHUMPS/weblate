@@ -1,4 +1,4 @@
-Weblate 5.8.2
+Weblate 5.9.2
 -------------
 
 Not yet released.
@@ -7,14 +7,159 @@ Not yet released.
 
 **Improvements**
 
+* Renamed :ref:`vcs-bitbucket-server` to match new product name.
+* :http:get:`/api/users/` supports searching by user ID.
+
+**Bug fixes**
+
+* Avoid query parser crash in multi-threaded environments.
+* Avoid :ref:`autofix` crash on multi-value strings.
+* Make project tokens work when :ref:`2fa` or :ref:`component-agreement` are enforced.
+* Captcha solution were sometimes not accepted.
+
+**Compatibility**
+
+**Upgrading**
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+**Contributors**
+
+.. include:: changes/contributors/5.9.2.rst
+
+`All changes in detail <https://github.com/WeblateOrg/weblate/milestone/135?closed=1>`__.
+
+Weblate 5.9.1
+-------------
+
+Released on December 16th 2024.
+
+**Bug fixes**
+
+* Fixed publishing package to PyPI.
+
+**Upgrading**
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+**Contributors**
+
+.. include:: changes/contributors/5.9.1.rst
+
+`All changes in detail <https://github.com/WeblateOrg/weblate/milestone/134?closed=1>`__.
+
+Weblate 5.9
+-----------
+
+Released on December 16th 2024.
+
+**New features**
+
+* Per-project :ref:`machine-translation-setup` can now be configured via the Project :ref:`api`.
+
+  * Added :http:get:`/api/projects/{string:project}/machinery_settings/`.
+  * Added :http:post:`/api/projects/{string:project}/machinery_settings/`.
+
+* Translation memory import now supports files with XLIFF, PO and CSV formats, see :ref:`memory-user` and :wladmin:`import_memory` command in :ref:`manage`.
+* The registration CAPTCHA now includes proof-of-work mechanism ALTCHA.
+* Leading problematic characters in CSV are now checks for :ref:`glossary`, see :ref:`check-prohibited-initial-character`.
+* Logging to :ref:`graylog`.
+
+**Improvements**
+
+* :ref:`mt-google-translate-api-v3` now supports :ref:`glossary-mt` (optional).
+* A shortcut to duplicate a component is now available directly in the menu (:guilabel:`Manage` → :guilabel:`Duplicate Component`)
+* Included username when generating :ref:`credits`.
+* :ref:`bulk-edit` shows a preview of matched strings.
+* :http:get:`/api/components/(string:project)/(string:component)/` exposes component lock state.
+* Editor in :ref:`zen-mode` is now stick to bottom of screen.
+* Added page navigation while :ref:`translating`.
+* :ref:`manage-appearance` now has distinct settings for dark mode.
+* Improved :ref:`translation-propagation` performance.
+* More detailed error messages for :http:post:`/api/translations/(string:project)/(string:component)/(string:language)/file/`.
+
+**Bug fixes**
+
+* Using the ``has:variant`` field now correctly displays strings that have variant(s) in the search language, see :ref:`search-strings`.
+* Saving newly added strings in some formats.
+* :ref:`check-java-printf-format` gracefully handles escaping.
+
+**Compatibility**
+
+* :ref:`rollbar-errors` integration no longer includes client-side error collection.
+* Weblate now requires Git 2.28 or newer.
+* Any custom code that relied on `Change` models signals should be reviewed.
+* :ref:`fedora-messaging` integration needs to be updated to be compatible with this release.
+* :envvar:`WEB_WORKERS` now configures number of threads instead of processes.
+
+**Upgrading**
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+**Contributors**
+
+.. include:: changes/contributors/5.9.rst
+
+`All changes in detail <https://github.com/WeblateOrg/weblate/milestone/127?closed=1>`__.
+
+Weblate 5.8.4
+-------------
+
+Released on November 19th 2024.
+
+**Improvements**
+
+* :ref:`search-users` can search based on user changes.
+
+**Bug fixes**
+
+* Fixed occasional crash in :ref:`rss`.
+* :ref:`check-icu-message-format` gracefully handles plural strings.
+* :ref:`vcs-bitbucket-cloud` correctly generates pull request description.
+
+**Upgrading**
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+**Contributors**
+
+.. include:: changes/contributors/5.8.4.rst
+
+`All changes in detail <https://github.com/WeblateOrg/weblate/milestone/132?closed=1>`__.
+
+Weblate 5.8.3
+-------------
+
+Released on November 6th 2024.
+
+**Bug fixes**
+
+* Formatting of some :ref:`audit-log` entries.
+* Fixed XML escaped output in some machine translation integrations.
+* Fixed duplicate listing of newly added glossary terms.
+
+**Upgrading**
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+**Contributors**
+
+.. include:: changes/contributors/5.8.3.rst
+
+`All changes in detail <https://github.com/WeblateOrg/weblate/milestone/131?closed=1>`__.
+
+Weblate 5.8.2
+-------------
+
+Released on November 1st 2024.
+
 **Bug fixes**
 
 * Update outdated plural definitions during the database migration.
 * Reduced number of database queries when updating multiple strings.
 * Leading problematic characters in :ref:`glossary` terms are now properly stripped in uploaded files.
 * Improved :ref:`workflow-customization` performance.
-
-**Compatibility**
+* Fixed XML escaped output in some machine translation integrations.
 
 **Upgrading**
 
@@ -69,8 +214,8 @@ Released on October 15th 2024.
 * Stale, empty glossaries are now automatically removed.
 * :kbd:`?` now displays available :ref:`keyboard`.
 * Translation and language view in the project now include basic information about the language and plurals.
-* :ref:`bulk-edit` shows a preview of matched strings.
-* :ref:`aresource` now supports translatable attribute in its strings.
+* :ref:`search-replace` shows a preview of matched strings.
+* :ref:`aresource` now support translatable attribute in its strings.
 * Creating component via file upload (Translate document) now supports bilingual files.
 
 **Bug fixes**

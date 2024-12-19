@@ -131,7 +131,7 @@ class Addon(models.Model):
             update_fields=update_fields,
         )
 
-    def get_absolute_url(self):
+    def get_absolute_url(self) -> str:
         return reverse("addon-detail", kwargs={"pk": self.pk})
 
     def __init__(self, *args, acting_user: User | None = None, **kwargs) -> None:
@@ -148,7 +148,7 @@ class Addon(models.Model):
             details=self.configuration,
         )
 
-    def configure_events(self, events) -> None:
+    def configure_events(self, events: set[AddonEvent]) -> None:
         for event in events:
             Event.objects.get_or_create(addon=self, event=event)
         self.event_set.exclude(event__in=events).delete()
@@ -233,7 +233,7 @@ class AddonsConf(AppConf):
         "weblate.addons.gettext.GettextAuthorComments",
         "weblate.addons.cleanup.CleanupAddon",
         "weblate.addons.cleanup.RemoveBlankAddon",
-        "weblate.addons.consistency.LangaugeConsistencyAddon",
+        "weblate.addons.consistency.LanguageConsistencyAddon",
         "weblate.addons.discovery.DiscoveryAddon",
         "weblate.addons.autotranslate.AutoTranslateAddon",
         "weblate.addons.flags.SourceEditAddon",
@@ -270,7 +270,7 @@ def execute_addon_event(
     component: Component,
     scope: Translation | Component,
     event: AddonEvent,
-    method: str | Callable,
+    method: str | Callable[[Addon, Component], None],
     args: tuple | None = None,
 ) -> None:
     # Trigger repository scoped add-ons only on the main component
@@ -361,7 +361,7 @@ def handle_addon_event(
 @overload
 def handle_addon_event(
     event: AddonEvent,
-    method: Callable,
+    method: Callable[[Addon, Component], None],
     args: None = None,
     *,
     component: None = None,
@@ -389,7 +389,8 @@ def handle_addon_event(
         component = translation.component
 
     if component is None and not auto_scope:
-        raise ValueError("Missing event scope!")
+        msg = "Missing event scope!"
+        raise ValueError(msg)
 
     # EVENT_DAILY uses custom queryset because it is not triggered from the
     # object scope

@@ -40,17 +40,21 @@ def download_invoice(request: AuthenticatedHttpRequest, pk):
     """Download invoice PDF."""
     invoice = get_object_or_404(Invoice, pk=pk)
 
-    if not invoice.ref:
-        raise Http404("No reference!")
+    filename = invoice.full_filename
+
+    if not filename:
+        msg = "No reference!"
+        raise Http404(msg)
 
     if not request.user.has_perm("billing.view", invoice.billing):
         raise PermissionDenied
 
     if not invoice.filename_valid:
-        raise Http404(f"File {invoice.filename} does not exist!")
+        msg = f"File {invoice.filename} does not exist!"
+        raise Http404(msg)
 
     return FileResponse(
-        open(invoice.full_filename, "rb"),  # noqa: SIM115
+        open(filename, "rb"),
         as_attachment=True,
         filename=invoice.filename,
         content_type="application/pdf",
@@ -94,9 +98,9 @@ def handle_post(request: AuthenticatedHttpRequest, billing) -> None:
                 billing.save(update_fields=["payment"])
                 mail_admins_contact(
                     request,
-                    "Hosting request for %(billing)s",
-                    HOSTING_TEMPLATE,
-                    {
+                    subject=f"Hosting request for {billing}",
+                    message=HOSTING_TEMPLATE,
+                    context={
                         "billing": billing,
                         "name": request.user.full_name,
                         "email": request.user.email,
@@ -105,8 +109,9 @@ def handle_post(request: AuthenticatedHttpRequest, billing) -> None:
                         "message": form.cleaned_data["message"],
                         "billing_url": billing.get_absolute_url(),
                     },
-                    request.user.get_author_name(request.user.email),
-                    settings.ADMINS_HOSTING,
+                    name=request.user.get_visible_name(),
+                    email=request.user.email,
+                    to=settings.ADMINS_HOSTING,
                 )
             else:
                 show_form_errors(request, form)

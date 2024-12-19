@@ -226,7 +226,8 @@ def show(request: AuthenticatedHttpRequest, path):
         return show_category_language(request, obj)
     if isinstance(obj, Translation):
         return show_translation(request, obj)
-    raise TypeError(f"Not supported show: {obj}")
+    msg = f"Not supported show: {obj}"
+    raise TypeError(msg)
 
 
 def show_project_language(request: AuthenticatedHttpRequest, obj: ProjectLanguage):
@@ -286,9 +287,6 @@ def show_project_language(request: AuthenticatedHttpRequest, obj: ProjectLanguag
             ),
             "announcement_form": optional_form(
                 AnnouncementForm, user, "project.edit", obj
-            ),
-            "licenses": project_object.component_set.exclude(license="").order_by(
-                "license"
             ),
             "language_stats": project_object.stats.get_single_language_stats(
                 language_object
@@ -352,9 +350,6 @@ def show_category_language(request: AuthenticatedHttpRequest, obj):
             "search_form": SearchForm(
                 user, language=language_object, initial=SearchForm.get_initial(request)
             ),
-            "licenses": obj.category.get_child_components_access(user)
-            .exclude(license="")
-            .order_by("license"),
             "language_stats": category_object.stats.get_single_language_stats(
                 language_object
             ),
@@ -452,10 +447,6 @@ def show_project(request: AuthenticatedHttpRequest, obj):
             ),
             "components": components,
             "categories": prefetch_stats(obj.category_set.filter(category=None)),
-            "licenses": sorted(
-                (component for component in all_components if component.license),
-                key=lambda component: component.license,
-            ),
         },
     )
 
@@ -535,10 +526,6 @@ def show_category(request: AuthenticatedHttpRequest, obj):
             ),
             "components": components,
             "categories": prefetch_stats(obj.category_set.all()),
-            "licenses": sorted(
-                (component for component in all_components if component.license),
-                key=lambda component: component.license,
-            ),
         },
     )
 
@@ -816,10 +803,6 @@ def show_component_list(request: AuthenticatedHttpRequest, name):
         {
             "object": obj,
             "components": components,
-            "licenses": sorted(
-                (component for component in components if component.license),
-                key=lambda component: component.license,
-            ),
         },
     )
 

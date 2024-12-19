@@ -8,10 +8,10 @@ import warnings
 from gettext import c2py
 from io import StringIO
 from itertools import chain
-from unittest import SkipTest
 
 from django.core.management import call_command
 from django.test import TestCase
+from django.test.utils import override_settings
 from django.urls import reverse
 from django.utils.translation import activate
 from weblate_language_data.aliases import ALIASES
@@ -304,7 +304,8 @@ class LanguageTestSequenceMeta(type):
                 params[0].replace("@", "___").replace("+", "_").replace("-", "__")
             )
             if test_name in dict:
-                raise ValueError(f"Duplicate test: {params[0]}, mapped to {test_name}")
+                msg = f"Duplicate test: {params[0]}, mapped to {test_name}"
+                raise ValueError(msg)
             dict[test_name] = gen_test(*params)
 
         return type.__new__(mcs, name, bases, dict)
@@ -375,7 +376,7 @@ class LanguagesTest(BaseTestCase, metaclass=LanguageTestSequenceMeta):
     def test_case_sensitive_fuzzy_get(self) -> None:
         """Test handling of manually created zh-TW, zh-TW and zh_TW languages."""
         if not using_postgresql():
-            raise SkipTest("Not supported on MySQL")
+            self.skipTest("Not supported on MySQL")
 
         language = Language.objects.create(code="zh_TW", name="Chinese (Taiwan)")
         language.plural_set.create(
@@ -408,6 +409,8 @@ class CommandTest(BaseTestCase):
     def test_setuplang(self) -> None:
         call_command("setuplang")
         self.assertTrue(Language.objects.exists())
+        with self.assertNumQueries(3):
+            call_command("setuplang")
 
     def test_setuplang_noupdate(self) -> None:
         call_command("setuplang", update=False)
@@ -771,3 +774,13 @@ class PluralMapperTestCase(FixtureTestCase):
             mapper.map(unit),
             ["{{periodNumber}}-я четверть", "{{periodNumber}}-я четверть"],
         )
+
+    def test_arabic_aliases(self) -> None:
+        arabic = Language.objects.get(code="ar")
+        self.assertEqual(arabic.get_aliases_names(), ["ar_aa", "ar_ar", "ara", "arb"])
+        with override_settings(SIMPLIFY_LANGUAGES=True):
+            self.assertEqual(
+                arabic.get_aliases_names(), ["ar_aa", "ar_ar", "ara", "arb"]
+            )
+        with override_settings(SIMPLIFY_LANGUAGES=False):
+            self.assertEqual(arabic.get_aliases_names(), ["ar_ar", "ara", "arb"])

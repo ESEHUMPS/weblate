@@ -10,6 +10,13 @@ from zipfile import BadZipfile
 
 from django.conf import settings
 from django.db.models import Model
+from drf_spectacular.extensions import OpenApiSerializerExtension
+from drf_spectacular.plumbing import build_basic_type, build_object_type
+from drf_spectacular.utils import (
+    OpenApiExample,
+    extend_schema_serializer,
+    inline_serializer,
+)
 from rest_framework import serializers
 
 from weblate.accounts.models import Subscription
@@ -44,6 +51,7 @@ from weblate.utils.views import (
 )
 
 if TYPE_CHECKING:
+    from drf_spectacular.openapi import AutoSchema
     from rest_framework.request import Request
 
 _MT = TypeVar("_MT", bound=Model)  # Model Type
@@ -101,7 +109,7 @@ class MultiFieldHyperlinkedIdentityField(serializers.HyperlinkedIdentityField):
 
 class AbsoluteURLField(serializers.CharField):
     def get_attribute(self, instance):
-        value = cast(str, super().get_attribute(instance))
+        value = cast("str", super().get_attribute(instance))
         if "http:/" not in value and "https:/" not in value:
             return get_site_url(value)
         return value
@@ -168,31 +176,32 @@ class LanguageSerializer(serializers.ModelSerializer[Language]):
     def validate_code(self, value):
         check_query = Language.objects.filter(code=value)
         if not check_query.exists() and self.is_source_language:
-            raise serializers.ValidationError(
-                "Language with this language code was not found."
-            )
+            msg = "Language with this language code was not found."
+            raise serializers.ValidationError(msg)
         return value
 
     def validate_plural(self, value):
         if not value and not self.is_source_language:
-            raise serializers.ValidationError("This field is required.")
+            msg = "This field is required."
+            raise serializers.ValidationError(msg)
         return value
 
     def validate_name(self, value):
         if not value and not self.is_source_language:
-            raise serializers.ValidationError("This field is required.")
+            msg = "This field is required."
+            raise serializers.ValidationError(msg)
         return value
 
     def create(self, validated_data):
         plural_validated = validated_data.pop("plural", None)
         if not plural_validated:
-            raise serializers.ValidationError("No valid plural data was provided.")
+            msg = "No valid plural data was provided."
+            raise serializers.ValidationError(msg)
 
         check_query = Language.objects.filter(code=validated_data.get("code"))
         if check_query.exists():
-            raise serializers.ValidationError(
-                "Language with this Language code already exists."
-            )
+            msg = "Language with this Language code already exists."
+            raise serializers.ValidationError(msg)
         language = super().create(validated_data)
         plural = Plural(language=language, **plural_validated)
         plural.save()
@@ -267,9 +276,8 @@ class PermissionSerializer(serializers.RelatedField[Permission, str, str]):
     def to_internal_value(self, data):
         check_query = Permission.objects.filter(codename=data)
         if not check_query.exists():
-            raise serializers.ValidationError(
-                "Permission with this codename was not found."
-            )
+            msg = "Permission with this codename was not found."
+            raise serializers.ValidationError(msg)
         return data
 
 
@@ -397,6 +405,9 @@ class ProjectSerializer(serializers.ModelSerializer[Project]):
     credits_url = serializers.HyperlinkedIdentityField(
         view_name="api:project-credits", lookup_field="slug"
     )
+    machinery_settings = serializers.HyperlinkedIdentityField(
+        view_name="api:project-machinery-settings", lookup_field="slug"
+    )
 
     class Meta:
         model = Project
@@ -422,6 +433,7 @@ class ProjectSerializer(serializers.ModelSerializer[Project]):
             "enable_hooks",
             "language_aliases",
             "enforced_2fa",
+            "machinery_settings",
         )
         extra_kwargs = {
             "url": {"view_name": "api:project-detail", "lookup_field": "slug"}
@@ -496,6 +508,7 @@ class ComponentSerializer(RemovableSerializer[Component]):
     push_branch = LinkedField(
         required=False, allow_blank=True, max_length=BRANCH_LENGTH
     )
+    locked = serializers.BooleanField(read_only=True)
 
     serializer_url_field = MultiFieldHyperlinkedIdentityField
 
@@ -595,6 +608,7 @@ class ComponentSerializer(RemovableSerializer[Component]):
             "disable_autoshare",
             "category",
             "linked_component",
+            "locked",
         )
         extra_kwargs = {
             "url": {
@@ -617,10 +631,12 @@ class ComponentSerializer(RemovableSerializer[Component]):
 
     def validate_enforced_checks(self, value):
         if not isinstance(value, list):
-            raise serializers.ValidationError("Enforced checks has to be a list.")
+            msg = "Enforced checks has to be a list."
+            raise serializers.ValidationError(msg)
         for item in value:
             if item not in CHECKS:
-                raise serializers.ValidationError(f"Unsupported enforced check: {item}")
+                msg = f"Unsupported enforced check: {item}"
+                raise serializers.ValidationError(msg)
         return value
 
     def to_representation(self, instance):
@@ -1046,9 +1062,8 @@ class UnitLabelsSerializer(serializers.RelatedField, LabelSerializer):
         try:
             label = self.get_queryset().get(id=data)
         except Label.DoesNotExist as err:
-            raise serializers.ValidationError(
-                "Label with this ID was not found in this project."
-            ) from err
+            msg = "Label with this ID was not found in this project."
+            raise serializers.ValidationError(msg) from err
         return label
 
 
@@ -1510,3 +1525,68 @@ class MetricsSerializer(ReadOnlySerializer):
         child=serializers.IntegerField(), source="get_celery_queues"
     )
     name = serializers.CharField(source="get_name")
+
+
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Service settings example",
+            value={
+                "service": "service_name",
+                "configuration": {"key": "xxxxx", "url": "https://api.service.com/"},
+            },
+        )
+    ]
+)
+class SingleServiceConfigSerializer(serializers.Serializer):
+    service = serializers.CharField()
+    configuration = serializers.DictField()
+
+
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            "Service settings example",
+            value={
+                "service1": {"key": "XXXXXXX", "url": "https://api.service.com/"},
+                "service2": {"secret": "SECRET_KEY", "credentials": "XXXXXXX"},
+            },
+            request_only=False,
+            response_only=True,
+        )
+    ]
+)
+class ProjectMachinerySettingsSerializer(serializers.Serializer):
+    def to_representation(self, instance: Project):
+        return dict(instance.machinery_settings)
+
+
+class ProjectMachinerySettingsSerializerExtension(OpenApiSerializerExtension):
+    target_class = ProjectMachinerySettingsSerializer
+
+    def map_serializer(self, auto_schema: AutoSchema, direction):
+        return build_object_type(properties={"service_name": build_basic_type(dict)})
+
+
+def edit_service_settings_response_serializer(
+    method: str, *codes
+) -> dict[int, serializers.Serializer]:
+    serializers_ = {
+        200: inline_serializer(
+            f"{method}_200_Message_response_serializer",
+            fields={
+                "message": serializers.CharField(),
+            },
+        ),
+        201: inline_serializer(
+            f"{method}_201_Message_response_serializer",
+            fields={
+                "message": serializers.CharField(),
+            },
+        ),
+        400: inline_serializer(
+            f"{method}_400_Error_message_serializer",
+            fields={"errors": serializers.CharField()},
+        ),
+    }
+    return {code: serializers_[code] for code in codes}
