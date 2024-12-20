@@ -43,7 +43,7 @@ class MachineryMixin:
     @cached_property
     def global_settings_dict(self) -> dict[str, SettingsDict]:
         return cast(
-            dict[str, SettingsDict],
+            "dict[str, SettingsDict]",
             Setting.objects.get_settings_dict(SettingCategory.MT),
         )
 
@@ -116,7 +116,7 @@ class MachineryConfiguration:
     def has_settings(self):
         return self.machinery.settings_form is not None
 
-    def get_absolute_url(self):
+    def get_absolute_url(self) -> str:
         kwargs = {"machinery": self.id}
         if self.project:
             kwargs["project"] = self.project.slug
@@ -275,7 +275,8 @@ class EditMachineryView(FormView):
             return HttpResponseRedirect(self.get_success_url())
 
         if not self.machinery.is_available:
-            raise Http404("Invalid service specified")
+            msg = "Invalid service specified"
+            raise Http404(msg)
 
         if "enable" in request.POST:
             self.delete_service()
@@ -290,7 +291,8 @@ class EditMachineryView(FormView):
 
     def get(self, request: AuthenticatedHttpRequest, *args, **kwargs):
         if not self.machinery.is_available:
-            raise Http404("Invalid service specified")
+            msg = "Invalid service specified"
+            raise Http404(msg)
         return super().get(request, *args, **kwargs)
 
 
@@ -352,7 +354,7 @@ class EditMachineryProjectView(MachineryProjectMixin, EditMachineryView):
 
 
 def format_string_helper(
-    source: str, translation: Translation, diff: None | str = None
+    source: str, translation: Translation, diff: str | None = None
 ):
     return format_language_string(source, translation, diff=diff)["items"][0]["content"]
 
@@ -382,7 +384,8 @@ def handle_machinery(request: AuthenticatedHttpRequest, service, unit, search=No
     try:
         translation_service_class = MACHINERY[service]
     except KeyError as error:
-        raise Http404("Invalid service specified") from error
+        msg = "Invalid service specified"
+        raise Http404(msg) from error
 
     # Error response
     response = {

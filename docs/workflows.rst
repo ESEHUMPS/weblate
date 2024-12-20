@@ -107,7 +107,7 @@ This is also the default setup in Weblate.
   sure about the change.
 
 +----------------------------------+-------------+------------------------------------+
-| Setting                          |   Value     |   Note                             |
+| Setting                          | Value       | Note                               |
 +==================================+=============+====================================+
 | Enable reviews                   | off         | Configured at project level.       |
 +----------------------------------+-------------+------------------------------------+
@@ -132,14 +132,14 @@ Peer review
 -----------
 
 With this workflow, anybody can add a suggestion, which needs approval
-from additional member(s) before it is accepted as a translation.
+from additional members before it is accepted as a translation.
 
 * *Any user* can add suggestions.
 * *Any user* can vote for suggestions.
 * Suggestions become translations when given a predetermined number of votes.
 
 +---------------------------------+-------------+------------------------------------+
-| Setting                         |   Value     |   Note                             |
+| Setting                         | Value       | Note                               |
 +=================================+=============+====================================+
 | Enable reviews                  | off         | Configured at project level.       |
 +---------------------------------+-------------+------------------------------------+
@@ -172,7 +172,7 @@ consistent and that the quality is good.
 * Suggestions can also be used to suggest changes for approved strings.
 
 +---------------------------------+-------------+------------------------------------+
-| Setting                         |   Value     |   Note                             |
+| Setting                         | Value       | Note                               |
 +=================================+=============+====================================+
 | Enable reviews                  | on          | Configured at project level.       |
 +---------------------------------+-------------+------------------------------------+

@@ -8,6 +8,7 @@ from collections import defaultdict
 from copy import copy
 from email.utils import formataddr
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from dateutil.relativedelta import relativedelta
 from django.conf import settings
@@ -31,6 +32,7 @@ from weblate.auth.models import User
 from weblate.lang.models import Language
 from weblate.logger import LOGGER
 from weblate.trans.models import Alert, Change, Component, Project, Translation
+from weblate.utils.errors import report_error
 from weblate.utils.markdown import get_mention_users
 from weblate.utils.ratelimit import rate_limit
 from weblate.utils.site import get_site_domain, get_site_url
@@ -69,6 +71,7 @@ def get_email_headers(notification: str) -> dict[str, str]:
     return {
         "X-Mailer": "Weblate" if settings.HIDE_VERSION else USER_AGENT,
         "X-Weblate-Notification": notification,
+        "Message-ID": f"{uuid4()}@{get_site_domain()}",
     }
 
 
@@ -84,6 +87,14 @@ def register_notification(handler: type[Notification]):
 
 def is_notificable_action(action: int) -> bool:
     return action in NOTIFICATIONS_ACTIONS
+
+
+def dispatch_changes_notifications(changes: Iterable[Change]) -> None:
+    from weblate.accounts.tasks import notify_changes
+
+    notify_changes.delay_on_commit(
+        [change.pk for change in changes if is_notificable_action(change.action)]
+    )
 
 
 class Notification:
@@ -105,7 +116,7 @@ class Notification:
     ) -> None:
         self.outgoing: list[OutgoingEmail] = outgoing
         self.subscription_cache: dict[
-            tuple[str | None | int, ...], QuerySet[Subscription]
+            tuple[str | int | None, ...], QuerySet[Subscription]
         ] = {}
         self.child_notify: list[Notification] | None = None
         if perm_cache is not None:
@@ -115,7 +126,7 @@ class Notification:
 
     def get_language_filter(
         self, change: Change, translation: Translation
-    ) -> None | Language:
+    ) -> Language | None:
         if self.filter_languages:
             return translation.language
         return None
@@ -134,11 +145,11 @@ class Notification:
 
     def filter_subscriptions(
         self,
-        project: None | Project,
-        component: None | Component,
-        translation: None | Translation,
+        project: Project | None,
+        component: Component | None,
+        translation: Translation | None,
         users: list[int] | None,
-        lang_filter: None | Language,
+        lang_filter: Language | None,
     ) -> QuerySet[Subscription]:
         from weblate.accounts.models import Subscription
 
@@ -300,8 +311,10 @@ class Notification:
         if changes is not None:
             result["changes"] = changes
         if subscription is not None:
-            result["unsubscribe_url"] = "{}?i={}".format(
-                reverse("unsubscribe"), TimestampSigner().sign(f"{subscription.pk}")
+            result["unsubscribe_url"] = get_site_url(
+                "{}?i={}".format(
+                    reverse("unsubscribe"), TimestampSigner().sign(f"{subscription.pk}")
+                )
             )
             result["subscription_user"] = subscription.user
         else:
@@ -419,18 +432,24 @@ class Notification:
             context = self.get_context(subscription=subscription, changes=changes)
             subject = self.render_template("_subject.txt", context, digest=True)
             context["subject"] = subject
-            LOGGER.info(
-                "sending digest notification %s on %d changes to %s",
-                self.get_name(),
-                len(changes),
-                email,
-            )
-            self.send(
-                email,
-                subject,
-                self.render_template(".html", context, digest=True),
-                self.get_headers(context),
-            )
+            try:
+                body = self.render_template(".html", context, digest=True)
+            except Exception:
+                report_error("Could not render changes", level="critical")
+                LOGGER.exception(
+                    "sending digest notification %s on %d changes to %s failed",
+                    self.get_name(),
+                    len(changes),
+                    email,
+                )
+            else:
+                LOGGER.info(
+                    "sending digest notification %s on %d changes to %s",
+                    self.get_name(),
+                    len(changes),
+                    email,
+                )
+                self.send(email, subject, body, self.get_headers(context))
 
     def notify_digest(
         self,
@@ -648,10 +667,10 @@ class LastAuthorCommentNotificaton(Notification):
     def get_users(
         self,
         frequency: int,
-        change: None | Change = None,
-        project: None | Project = None,
-        component: None | Component = None,
-        translation: None | Translation = None,
+        change: Change | None = None,
+        project: Project | None = None,
+        component: Component | None = None,
+        translation: Translation | None = None,
         users: list[int] | None = None,
     ):
         last_author = change.unit.get_last_content_change()[0]

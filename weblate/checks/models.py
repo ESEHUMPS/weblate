@@ -33,6 +33,10 @@ class ChecksLoader(ClassLoader):
     def target(self):
         return {k: v for k, v in self.items() if v.target}
 
+    @cached_property
+    def glossary(self):
+        return {k: v for k, v in self.items() if v.glossary}
+
 
 # Initialize checks list
 CHECKS = ChecksLoader()
@@ -106,6 +110,7 @@ class WeblateChecksConf(AppConf):
         "weblate.checks.source.LongUntranslatedCheck",
         "weblate.checks.format.MultipleUnnamedFormatsCheck",
         "weblate.checks.glossary.GlossaryCheck",
+        "weblate.checks.glossary.ProhibitedInitialCharacterCheck",
         "weblate.checks.fluent.syntax.FluentSourceSyntaxCheck",
         "weblate.checks.fluent.syntax.FluentTargetSyntaxCheck",
         "weblate.checks.fluent.parts.FluentPartsCheck",
@@ -151,7 +156,7 @@ class Check(models.Model):
         return str(self.get_name())
 
     @cached_property
-    def check_obj(self):
+    def check_obj(self) -> BaseCheck | None:
         try:
             return CHECKS[self.name]
         except KeyError:

@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from django.urls import reverse
 from django.utils import timezone
 
-from weblate.trans.models.category import Category
 from weblate.trans.tests.test_views import ViewTestCase
 from weblate.trans.views.reports import generate_counts, generate_credits
 
@@ -74,6 +73,7 @@ class ReportsTest(BaseReportsTest):
                     {
                         "email": "weblate@example.org",
                         "full_name": "Weblate <b>Test</b>",
+                        "username": "testuser",
                         "change_count": expected_count,
                     }
                 ]
@@ -151,6 +151,7 @@ class ReportsComponentTest(BaseReportsTest):
                         {
                             "email": "weblate@example.org",
                             "full_name": "Weblate <b>Test</b>",
+                            "username": "testuser",
                             "change_count": 1,
                         }
                     ]
@@ -167,7 +168,7 @@ class ReportsComponentTest(BaseReportsTest):
             """
 * Czech
 
-    * Weblate <b>Test</b> <weblate@example.org> (1)
+    * Weblate <b>Test</b> (testuser) <weblate@example.org> - 1
 """.strip(),
         )
 
@@ -179,7 +180,7 @@ class ReportsComponentTest(BaseReportsTest):
             "<table><tbody>\n"
             "<tr>\n<th>Czech</th>\n"
             '<td><ul><li><a href="mailto:weblate@example.org">'
-            "Weblate &lt;b&gt;Test&lt;/b&gt;</a> (1)</li></ul></td>\n</tr>\n"
+            "Weblate &lt;b&gt;Test&lt;/b&gt; (testuser)</a> - 1</li></ul></td>\n</tr>\n"
             "</tbody></table>",
         )
 
@@ -397,15 +398,12 @@ class ReportsGlobalTest(ReportsComponentTest):
 class ReportsCategoryTest(ReportsComponentTest):
     def setUp(self) -> None:
         super().setUp()
-        self.category = self.create_category()
+        self.setup_category()
 
-    def create_category(self) -> None:
-        category = Category.objects.create(
-            name="test category", slug="test-category", project=self.project
-        )
-        self.component.category = category
+    def setup_category(self) -> None:
+        self.component.category = self.create_category(project=self.project)
         self.component.save()
-        return category
+        self.category = self.component.category
 
     def get_kwargs(self) -> dict[str, tuple]:
         return {"path": self.category.get_url_path()}

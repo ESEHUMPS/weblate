@@ -38,7 +38,7 @@ class MaxSizeCheck(TargetCheckParametrized):
     def param_type(self):
         return multi_value_flag(int, 1, 2)
 
-    def get_params(self, unit: Unit) -> tuple[str, None | int, int, int]:
+    def get_params(self, unit: Unit) -> tuple[str, int | None, int, int]:
         all_flags = unit.all_flags
         return (
             all_flags.get_value_fallback("font-family", "sans"),
@@ -123,7 +123,8 @@ class MaxSizeCheck(TargetCheckParametrized):
             )
             result = cache.get(key)
         if result is None:
-            raise Http404("Invalid check")
+            msg = "Invalid check"
+            raise Http404(msg)
         response = HttpResponse(content_type="image/png")
         response.write(result)
         return response

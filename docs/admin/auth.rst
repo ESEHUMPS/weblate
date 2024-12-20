@@ -115,7 +115,7 @@ The GitHub should be configured to have callback URL as
 There are similar authentication backends for GitHub for Organizations and
 GitHub for Teams. Their settings are named ``SOCIAL_AUTH_GITHUB_ORG_*`` and
 ``SOCIAL_AUTH_GITHUB_TEAM_*``, and they require additional setting of the scope
-- ``SOCIAL_AUTH_GITHUB_ORG_NAME`` or ``SOCIAL_AUTH_GITHUB_TEAM_ID``.  Their
+- ``SOCIAL_AUTH_GITHUB_ORG_NAME`` or ``SOCIAL_AUTH_GITHUB_TEAM_ID``. Their
 callback URLs are ``https://WEBLATE SERVER/accounts/complete/github-org/`` and
 ``https://WEBLATE SERVER/accounts/complete/github-teams/``.
 
@@ -197,7 +197,7 @@ Google OAuth 2
 To use Google OAuth 2, you need to register an application at
 <https://console.developers.google.com/> and enable the Google+ API.
 
-The redirect URL is ``https://WEBLATE SERVER/accounts/complete/google-oauth2/``
+The redirect URL is ``https://WEBLATE SERVER/accounts/complete/google-oauth2/``.
 
 .. code-block:: python
 
@@ -226,7 +226,7 @@ Facebook OAuth 2
 As per usual with OAuth 2 services, you need to register your application with
 Facebook. Once this is done, you can set up Weblate to use it:
 
-The redirect URL is ``https://WEBLATE SERVER/accounts/complete/facebook/``
+The redirect URL is ``https://WEBLATE SERVER/accounts/complete/facebook/``.
 
 .. code-block:: python
 

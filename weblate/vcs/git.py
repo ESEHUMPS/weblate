@@ -84,7 +84,7 @@ class GitRepository(Repository):
 
     name: StrOrPromise = "Git"
     push_label = gettext_lazy("This will push changes to the upstream Git repository.")
-    req_version: str | None = "2.12"
+    req_version: str | None = "2.28"
     default_branch = "master"
     ref_to_remote = "..{0}"
     ref_from_remote = "{0}.."
@@ -96,17 +96,11 @@ class GitRepository(Repository):
         ) or os.path.exists(os.path.join(self.path, "config"))
 
     @classmethod
-    def _init(cls, path: str) -> None:
-        cls._popen(["init", path])
-        if cls.default_branch != "master":
-            # We could do here just init --initial-branch {branch}, but that does not
-            # work in Git before 2.28.0
-            with open(os.path.join(path, ".git/HEAD"), "w") as handle:
-                handle.write("ref: refs/heads/main\n")
-
-    def init(self) -> None:
+    def create_blank_repository(cls, path: str) -> None:
         """Initialize the repository."""
-        self._init(self.path)
+        cls._popen(
+            ["init", "--template=", "--initial-branch", cls.default_branch, path]
+        )
 
     @classmethod
     def get_remote_branch(cls, repo: str):
@@ -613,7 +607,6 @@ class GitWithGerritRepository(GitRepository):
 
 class SubversionRepository(GitRepository):
     name = "Subversion"
-    req_version = "2.12"
     default_branch = "master"
     push_label = gettext_lazy("This will commit changes to the Subversion repository.")
 
@@ -1078,7 +1071,7 @@ class GitMergeRequestBase(GitForcePushRepository):
 
     def get_auth(
         self, credentials: GitCredentials
-    ) -> None | tuple[str, str] | AuthBase:
+    ) -> tuple[str, str] | AuthBase | None:
         return None
 
     def get_error_message(self, response_data: dict) -> str:
@@ -1164,7 +1157,7 @@ class GitMergeRequestBase(GitForcePushRepository):
                 next_api_time = cache.get(cache_id)
                 now = time()
                 if next_api_time is not None and now < next_api_time:
-                    with sentry_sdk.start_span(op="api_sleep", name=vcs_id):
+                    with sentry_sdk.start_span(op="vcs.api_sleep", name=vcs_id):
                         sleep(next_api_time - now)
                 try:
                     response = requests.request(
@@ -1309,7 +1302,7 @@ class AzureDevOpsRepository(GitMergeRequestBase):
 
     def get_auth(
         self, credentials: GitCredentials
-    ) -> None | tuple[str, str] | AuthBase:
+    ) -> tuple[str, str] | AuthBase | None:
         return ("", credentials["token"])
 
     def create_fork(self, credentials: GitCredentials) -> None:
@@ -1377,7 +1370,7 @@ class AzureDevOpsRepository(GitMergeRequestBase):
 
         super_credentials["organization"] = credentials["organization"]
         super_credentials["workItemIds"] = cast(
-            list[str], credentials.get("workItemIds", [])
+            "list[str]", credentials.get("workItemIds", [])
         )
 
         return super_credentials
@@ -1724,15 +1717,16 @@ class LocalRepository(GitRepository):
         return cls.default_branch
 
     @classmethod
-    def _init(cls, path: str) -> None:
-        super()._init(path)
+    def create_blank_repository(cls, path: str) -> None:
+        """Initialize the repository."""
+        super().create_blank_repository(path)
         with open(os.path.join(path, "README.md"), "w") as handle:
             handle.write("Translations repository created by Weblate\n")
             handle.write("==========================================\n")
             handle.write("\n")
             handle.write("See https://weblate.org/ for more info.\n")
-        cls._popen(["add", "README.md"], path)
-        cls._popen(["commit", "--message", "Repository created by Weblate"], path)
+        cls._popen(["add", "README.md"], cwd=path)
+        cls._popen(["commit", "--message", "Repository created by Weblate"], cwd=path)
 
     @classmethod
     def _clone(
@@ -1743,7 +1737,7 @@ class LocalRepository(GitRepository):
     ) -> None:
         if not os.path.exists(target):
             os.makedirs(target)
-        cls._init(target)
+        cls.create_blank_repository(target)
 
     @cached_property
     def last_remote_revision(self):
@@ -2051,14 +2045,14 @@ class PagureRepository(GitMergeRequestBase):
 
 
 class BitbucketServerRepository(GitMergeRequestBase):
-    # Translators: Bitbucket Server is a product name, it differs from Bitbucked Cloud
-    name = gettext_lazy("Bitbucket Server pull request")
+    # Translators: Bitbucket Data Center is a product name, it differs from Bitbucked Cloud
+    name = gettext_lazy("Bitbucket Data Center pull request")
     identifier = "bitbucketserver"
     _version = None
     API_TEMPLATE = "{scheme}://{host}/rest/api/1.0/projects/{owner}/repos/{slug}"
     bb_fork: dict = {}
     push_label = gettext_lazy(
-        "This will push changes and create a Bitbucket Server pull request."
+        "This will push changes and create a Bitbucket Data Center pull request."
     )
 
     def get_headers(self, credentials: GitCredentials) -> dict[str, str]:
@@ -2180,7 +2174,7 @@ class BitbucketServerRepository(GitMergeRequestBase):
         )
 
         """
-        Bitbucket Server will return an error if a PR already exists.
+        Bitbucket Data Center will return an error if a PR already exists.
         The push method in the parent class pushes changes to the correct
         fork or branch, and always calls this create_pull_request method after.
         If the PR exists already just do nothing because Bitbucket will
@@ -2280,7 +2274,7 @@ class BitbucketCloudRepository(GitMergeRequestBase):
 
         payload = {
             "title": title,
-            "description": {"raw": description},
+            "description": description,
             "source": {
                 "branch": {"name": fork_branch},
                 "repository": {"type": "repository", "name": fork_remote},

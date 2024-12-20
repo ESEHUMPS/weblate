@@ -4,6 +4,9 @@
 
 """Test for user handling."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import responses
@@ -13,6 +16,7 @@ from django.test import Client, TestCase
 from django.test.utils import override_settings
 from django.urls import reverse
 
+from weblate.accounts.captcha import solve_altcha
 from weblate.accounts.models import VerifiedEmail
 from weblate.accounts.tasks import cleanup_social_auth
 from weblate.auth.models import User
@@ -21,11 +25,15 @@ from weblate.trans.tests.utils import get_test_file, social_core_override_settin
 from weblate.utils.django_hacks import immediate_on_commit, immediate_on_commit_leave
 from weblate.utils.ratelimit import reset_rate_limit
 
+if TYPE_CHECKING:
+    from altcha import Challenge
+
 REGISTRATION_DATA = {
     "username": "username",
     "email": "noreply-weblate@example.org",
     "fullname": "First Last",
     "captcha": "9999",
+    "altcha": "value",
 }
 
 GH_BACKENDS = (
@@ -151,14 +159,42 @@ class RegistrationTest(BaseRegistrationTest):
     def test_register_captcha_fail(self) -> None:
         response = self.do_register()
         self.assertContains(response, "That was not correct, please try again.")
+        self.assertContains(response, "Validation failed, please try again.")
+
+    def solve_altcha(self, response, data: dict):
+        form = response.context["form"]
+        challenge: Challenge = form.challenge
+        data["altcha"] = solve_altcha(challenge)
+
+    def solve_math(self, response, data: dict):
+        form = response.context["form"]
+        data["captcha"] = form.mathcaptcha.result
+
+    @override_settings(REGISTRATION_CAPTCHA=True)
+    def test_register_partial_altcha(self) -> None:
+        """Test registration with captcha enabled."""
+        response = self.client.get(reverse("register"))
+        data = REGISTRATION_DATA.copy()
+        self.solve_altcha(response, data)
+        response = self.do_register(data)
+        self.assertContains(response, "That was not correct, please try again.")
+
+    @override_settings(REGISTRATION_CAPTCHA=True)
+    def test_register_partial_match(self) -> None:
+        """Test registration with captcha enabled."""
+        response = self.client.get(reverse("register"))
+        data = REGISTRATION_DATA.copy()
+        self.solve_math(response, data)
+        response = self.do_register(data)
+        self.assertContains(response, "Validation failed, please try again.")
 
     @override_settings(REGISTRATION_CAPTCHA=True)
     def test_register_captcha(self) -> None:
         """Test registration with captcha enabled."""
         response = self.client.get(reverse("register"))
-        form = response.context["captcha_form"]
         data = REGISTRATION_DATA.copy()
-        data["captcha"] = form.mathcaptcha.result
+        self.solve_altcha(response, data)
+        self.solve_math(response, data)
         response = self.do_register(data)
         self.assertContains(response, REGISTRATION_SUCCESS)
 

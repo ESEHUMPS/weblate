@@ -15,8 +15,9 @@ from lxml import etree
 
 from weblate.checks.models import CHECKS
 from weblate.checks.parser import (
+    FLAGS_PARSER,
+    FLAGS_PARSER_LOCK,
     SYNTAXCHARS,
-    FlagsParser,
     length_validation,
     multi_value_flag,
     single_value_flag,
@@ -91,7 +92,10 @@ def _parse_flags_text(flags: str) -> Iterator[str | tuple[Any, ...]]:
     state = 0
     name: str
     value: list[Any] = []
-    tokens = list(FlagsParser.parse_string(flags, parseAll=True))
+
+    with FLAGS_PARSER_LOCK:
+        tokens = list(FLAGS_PARSER.parse_string(flags, parse_all=True))
+
     for pos, token in enumerate(tokens):
         if state == 0 and token == ",":
             pass
@@ -136,7 +140,8 @@ def _parse_flags_text(flags: str) -> Iterator[str | tuple[Any, ...]]:
             yield tuple(value)
             state = 0
         else:
-            raise ValueError(f"Unexpected token: {token}, state={state}")
+            msg = f"Unexpected token: {token}, state={state}"
+            raise ValueError(msg)
 
     # With state 0 there was nothing parsed yet
     if state > 0:
@@ -185,7 +190,7 @@ class Flags:
             self.merge(flags)
 
     def get_items(
-        self, flags: None | str | etree._Element | Flags | tuple[str | tuple[Any, ...]]
+        self, flags: str | etree._Element | Flags | tuple[str | tuple[Any, ...]] | None
     ) -> tuple[str | tuple[Any, ...], ...]:
         if flags is None:
             return ()
@@ -198,7 +203,7 @@ class Flags:
         return flags
 
     def merge(
-        self, flags: None | str | etree._Element | Flags | tuple[str | tuple[Any, ...]]
+        self, flags: str | etree._Element | Flags | tuple[str | tuple[Any, ...]] | None
     ) -> None:
         for flag in self.get_items(flags):
             if isinstance(flag, tuple):
@@ -208,7 +213,7 @@ class Flags:
                 self._items[flag] = flag
 
     def remove(
-        self, flags: None | str | etree._Element | Flags | tuple[str | tuple[Any, ...]]
+        self, flags: str | etree._Element | Flags | tuple[str | tuple[Any, ...]] | None
     ) -> None:
         for flag in self.get_items(flags):
             if isinstance(flag, tuple):
@@ -227,7 +232,7 @@ class Flags:
         return isinstance(self._items.get(key), tuple)
 
     def get_value_raw(self, key: str) -> tuple[Any, ...]:
-        return cast(tuple, self._items[key])[1:]
+        return cast("tuple", self._items[key])[1:]
 
     def get_value(self, key: str):
         return TYPED_FLAGS_ARGS[key](self.get_value_raw(key))

@@ -7,11 +7,11 @@ from __future__ import annotations
 import json
 import re
 from copy import copy
+from datetime import UTC, datetime
 from functools import partial
 from io import StringIO
 from typing import TYPE_CHECKING, NoReturn
-from unittest import SkipTest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import httpx
 import responses
@@ -71,7 +71,7 @@ from weblate.utils.db import TransactionsTestMixin
 from weblate.utils.state import STATE_TRANSLATED
 
 if TYPE_CHECKING:
-    from weblate.auth.models import AuthenticatedHttpRequest
+    from requests import PreparedRequest
 
 AMAGAMA_LIVE = "https://amagama-live.translatehouse.org/api/v1"
 
@@ -332,7 +332,7 @@ class BaseMachineTranslationTest(TestCase):
         pass
 
     def mock_error(self) -> None:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     @responses.activate
     @respx.mock
@@ -509,6 +509,38 @@ class GlossaryTranslationTest(BaseMachineTranslationTest):
         unit = MockUnit(code="cs", source=":foo", target=":bar")
         self.assertEqual(render_glossary_units_tsv([unit]), ":foo\t:bar")
 
+    def test_glossary_changes_invalidates_result_cache(self):
+        machine = self.get_machine(cache=True)
+        source_text = "Hello, world!"
+        unit = MockUnit(code="cs", source=source_text, target="")
+
+        with (
+            patch.object(
+                DummyGlossaryTranslation,
+                "list_glossaries",
+                return_value={
+                    "weblate:1:en:cs:9e250d830c11d70f": "weblate:1:en:cs:9e250d830c11d70f"
+                },
+            ),
+            patch("weblate.glossary.models.get_glossary_tsv", new=lambda _: "foo\tbar"),
+        ):
+            machine.translate(unit, threshold=75)
+            cache_key, result = machine.get_cached(
+                unit, "en", "cs", source_text, 75, {}
+            )
+            self.assertIsNotNone(cache_key)
+            self.assertTrue(len(result) > 0)
+            self.assertIsNotNone(result)
+
+        with patch(
+            "weblate.glossary.models.get_glossary_tsv", new=lambda _: "foo\tbar-edit"
+        ):
+            new_cache_key, new_result = machine.get_cached(
+                unit, "en", "cs", source_text, 75, {}
+            )
+            self.assertIsNone(new_result)
+            self.assertNotEqual(cache_key, new_cache_key)
+
 
 class GlosbeTranslationTest(BaseMachineTranslationTest):
     MACHINE_CLS = GlosbeTranslation
@@ -565,10 +597,10 @@ class MyMemoryTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_response(self) -> None:
         responses.add(
@@ -586,10 +618,10 @@ class ApertiumAPYTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_response(self) -> None:
         responses.add(
@@ -649,10 +681,10 @@ class MicrosoftCognitiveTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_response(self) -> None:
         responses.add(
@@ -736,7 +768,7 @@ class GoogleTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(responses.GET, GOOGLE_API_ROOT + "languages", body="", status=500)
@@ -783,12 +815,12 @@ class GoogleV3TranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
-    def mock_response(self) -> None:
+    def mock_languages(self) -> None:
         # Mock get supported languages
         patcher = patch.object(
             TranslationServiceClient,
@@ -807,6 +839,9 @@ class GoogleV3TranslationTest(BaseMachineTranslationTest):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+
+    def mock_response(self) -> None:
+        self.mock_languages()
 
         # Mock translate
         patcher = patch.object(
@@ -854,6 +889,149 @@ class GoogleV3TranslationTest(BaseMachineTranslationTest):
             unit.source, machine_translation.uncleanup_text(replacements, replaced)
         )
 
+    # set glossary_count_limit to 1 to also trigger delete_oldest_glossary
+    @patch("weblate.glossary.models.get_glossary_tsv", new=lambda _: "foo\tbar")
+    @patch("weblate.machinery.googlev3.GoogleV3Translation.glossary_count_limit", new=1)
+    def test_glossary(self) -> None:
+        self.mock_languages()
+        self.mock_glossary_responses()
+        self.CONFIGURATION["bucket_name"] = "test-bucket"
+
+        self.assert_translate(self.SUPPORTED, self.SOURCE_TRANSLATED, self.EXPECTED_LEN)
+
+    @patch("weblate.glossary.models.get_glossary_tsv", new=lambda _: "foo\tbar")
+    @patch("weblate.machinery.googlev3.GoogleV3Translation.glossary_count_limit", new=1)
+    def test_glossary_with_calls_check(self) -> None:
+        self.mock_languages()
+        self.mock_glossary_responses()
+        self.CONFIGURATION["bucket_name"] = "test-bucket"
+
+        with patch(
+            "weblate.machinery.googlev3.GoogleV3Translation.delete_glossary"
+        ) as delete_glossary_method:
+            self.assert_translate(
+                self.SUPPORTED, self.SOURCE_TRANSLATED, self.EXPECTED_LEN
+            )
+            delete_glossary_method.assert_has_calls(
+                [
+                    call("weblate__1__en__cs__a85e314d2f7614eb"),
+                    call("weblate__1__en__it__2d9a814c5f6321a8"),
+                ]
+            )
+
+    def mock_glossary_responses(self) -> None:
+        """
+        Mock the responses for Google Cloud Translate V3 API.
+
+        Patches list_glossaries, create_glossary, delete_glossary, translate_text
+        and also the storage client.
+        """
+        from google.cloud.translate_v3 import Glossary
+        from google.oauth2 import service_account
+
+        def _glossary(name: str, submit_time: datetime) -> Glossary:
+            """Return a mock Glossary object with given name and submit time."""
+            return Glossary(
+                display_name=name,
+                submit_time=submit_time,
+            )
+
+        # Mock list glossaries
+        list_glossaries_patcher = patch.object(
+            TranslationServiceClient,
+            "list_glossaries",
+            Mock(
+                side_effect=[
+                    # with stale glossary and another glossary
+                    [
+                        _glossary(
+                            "weblate__1__en__cs__a85e314d2f7614eb",
+                            datetime(2024, 9, 1, tzinfo=UTC),
+                        ),
+                        _glossary(
+                            "weblate__1__en__it__2d9a814c5f6321a8",
+                            datetime(2024, 9, 1, tzinfo=UTC),
+                        ),
+                    ],
+                    # the stale glossary has been deleted
+                    [
+                        _glossary(
+                            "weblate__1__en__it__2d9a814c5f6321a8",
+                            datetime(2024, 9, 1, tzinfo=UTC),
+                        )
+                    ],
+                    # new glossary
+                    [
+                        _glossary(
+                            "weblate__1__en__cs__9e250d830c11d70f",
+                            datetime(2024, 10, 1, tzinfo=UTC),
+                        )
+                    ],
+                ]
+            ),
+        )
+        list_glossaries_patcher.start()
+        self.addCleanup(list_glossaries_patcher.stop)
+
+        # Mock create glossary
+        create_glossary_patcher = patch.object(
+            TranslationServiceClient, "create_glossary", Mock()
+        )
+        create_glossary_patcher.start()
+        self.addCleanup(create_glossary_patcher.stop)
+
+        # Mock delete glossary
+        delete_glossary_patcher = patch.object(
+            TranslationServiceClient, "delete_glossary", Mock()
+        )
+        delete_glossary_patcher.start()
+        self.addCleanup(delete_glossary_patcher.stop)
+
+        # Mock translate with glossary
+        translate_patcher = patch.object(
+            TranslationServiceClient,
+            "translate_text",
+            Mock(
+                return_value=TranslateTextResponse(
+                    {
+                        "translations": [{"translated_text": "Ahoj"}],
+                        "glossary_translations": [{"translated_text": "Ahoj"}],
+                    }
+                ),
+            ),
+        )
+        translate_patcher.start()
+        self.addCleanup(translate_patcher.stop)
+
+        get_credentials_patcher = patch.object(
+            service_account.Credentials,
+            "from_service_account_info",
+            return_value=MagicMock(),
+        )
+        get_credentials_patcher.start()
+        self.addCleanup(get_credentials_patcher.stop)
+
+        class MockBlob(MagicMock):
+            def upload_from_string(self, *args, **kwargs):
+                """Mock google.cloud.storage.Blob.upload_from_string."""
+
+            def delete(self, *args, **kwargs):
+                """Mock google.cloud.storage.Blob.delete."""
+
+        class MockBucket(MagicMock):
+            def blob(self, *args, **kwargs):
+                """Mock google.cloud.storage.Bucket.blob."""
+                return MockBlob()
+
+        class MockStorageClient(MagicMock):
+            def get_bucket(self, *args, **kwargs):
+                """google.cloud.storage.Client.get_bucket."""
+                return MockBucket()
+
+        patcher = patch("google.cloud.storage.Client", new=MockStorageClient)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
 
 class TMServerTranslationTest(BaseMachineTranslationTest):
     MACHINE_CLS = TMServerTranslation
@@ -895,7 +1073,7 @@ class YandexTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(
@@ -946,7 +1124,7 @@ class YandexV2TranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(
@@ -1011,7 +1189,7 @@ class YoudaoTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(
@@ -1033,7 +1211,7 @@ class NeteaseSightTranslationTest(BaseMachineTranslationTest):
     CONFIGURATION = {"key": "id", "secret": "secret"}
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(responses.POST, NETEASE_API_ROOT, json={"success": "false"})
@@ -1059,7 +1237,7 @@ class BaiduTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(
@@ -1098,10 +1276,10 @@ class SystranTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_response(self) -> None:
         responses.add(
@@ -1135,7 +1313,7 @@ class SAPTranslationHubTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(
@@ -1188,7 +1366,7 @@ class ModernMTHubTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(
@@ -1223,7 +1401,7 @@ class ModernMTHubTest(BaseMachineTranslationTest):
 
         self.mock_list_glossaries()
 
-    def mock_list_glossaries(self, *id_name_date: tuple[int, str, str]):
+    def mock_list_glossaries(self, *id_name_date: tuple[int, str, str | None]):
         """Set up mock responses for list of glossaries in ModernMT."""
         data: list[dict] = [
             {
@@ -1286,7 +1464,7 @@ class ModernMTHubTest(BaseMachineTranslationTest):
     def test_glossary(self) -> None:
         """Test that glossary is used in translation request when available."""
 
-        def translate_request_callback(request: AuthenticatedHttpRequest):
+        def translate_request_callback(request: PreparedRequest):
             """Check 'glossaries' included in request params."""
             self.assertIn("glossaries", request.params)
             return (200, {}, json.dumps(MODERNMT_REPONSE))
@@ -1316,9 +1494,7 @@ class ModernMTHubTest(BaseMachineTranslationTest):
         # return current list of glossaries
         self.mock_list_glossaries(*[(37784, "weblate:1:en:it:9e250d830c11d70f", None)])
 
-        def delete_glossary_callback(
-            request: AuthenticatedHttpRequest, expected_id: int
-        ):
+        def delete_glossary_callback(request: PreparedRequest, expected_id: int):
             """Check that the stale glossary is being deleted."""
             self.assertTrue(request.url.endswith(f"memories/{expected_id}"))
             return (200, {}, "{}")
@@ -1420,7 +1596,7 @@ class ModernMTHubTest(BaseMachineTranslationTest):
     def test_context_vector(self) -> None:
         """Test that context vector is sent with the request when configured."""
 
-        def request_callback(request: AuthenticatedHttpRequest):
+        def request_callback(request: PreparedRequest):
             """Check 'context_vector' included in request body."""
             self.assertIn("context_vector", request.params)
             return (200, {}, json.dumps(MODERNMT_REPONSE))
@@ -1480,7 +1656,7 @@ class DeepLTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(
@@ -1525,9 +1701,11 @@ class DeepLTranslationTest(BaseMachineTranslationTest):
 
     @responses.activate
     def test_formality(self) -> None:
-        def request_callback(request: AuthenticatedHttpRequest):
+        expected_formality = "more"
+
+        def request_callback(request: PreparedRequest):
             payload = json.loads(request.body)
-            self.assertIn("formality", payload)
+            self.assertEqual(payload["formality"], expected_formality)
             return (200, {}, json.dumps(DEEPL_RESPONSE))
 
         machine = self.MACHINE_CLS(self.CONFIGURATION)
@@ -1539,17 +1717,47 @@ class DeepLTranslationTest(BaseMachineTranslationTest):
             callback=request_callback,
         )
         # Fetch from service
+        expected_formality = "default"
+        self.assert_translate(
+            self.SUPPORTED, self.SOURCE_TRANSLATED, self.EXPECTED_LEN, machine=machine
+        )
+        expected_formality = "more"
         self.assert_translate(
             "DE@FORMAL", self.SOURCE_TRANSLATED, self.EXPECTED_LEN, machine=machine
         )
+        expected_formality = "less"
         self.assert_translate(
             "DE@INFORMAL", self.SOURCE_TRANSLATED, self.EXPECTED_LEN, machine=machine
         )
 
     @responses.activate
+    def test_escaping(self) -> None:
+        def request_callback(request: PreparedRequest):
+            payload = json.loads(request.body)
+            self.assertIn("formality", payload)
+            response = DEEPL_RESPONSE.copy()
+            response["translations"][0]["text"] = "Hallo&amp;welt"
+            return (200, {}, json.dumps(response))
+
+        machine = self.MACHINE_CLS(self.CONFIGURATION)
+        machine.delete_cache()
+        self.mock_languages()
+        responses.add_callback(
+            responses.POST,
+            "https://api.deepl.com/v2/translate",
+            callback=request_callback,
+        )
+        # Fetch from service
+        translation = self.assert_translate(
+            self.SUPPORTED, "Hello&world", 1, machine=machine
+        )
+        self.assertEqual(translation[0][0]["source"], "Hello&world")
+        self.assertEqual(translation[0][0]["text"], "Hallo&welt")
+
+    @responses.activate
     @patch("weblate.glossary.models.get_glossary_tsv", new=lambda _: "foo\tbar")
     def test_glossary(self) -> None:
-        def request_callback(request: AuthenticatedHttpRequest):
+        def request_callback(request: PreparedRequest):
             payload = json.loads(request.body)
             self.assertIn("glossary_id", payload)
             return (200, {}, json.dumps(DEEPL_RESPONSE))
@@ -1593,7 +1801,7 @@ class DeepLTranslationTest(BaseMachineTranslationTest):
 
     @responses.activate
     def test_replacements(self) -> None:
-        def request_callback(request: AuthenticatedHttpRequest):
+        def request_callback(request: PreparedRequest):
             payload = json.loads(request.body)
             self.assertEqual(
                 payload["text"], ['Hello, <x id="7"></x>! &lt;&lt;foo&gt;&gt;']
@@ -1662,7 +1870,7 @@ class LibreTranslateTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> None:
         responses.add(
@@ -1714,10 +1922,10 @@ class AWSTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_response(self) -> None:
         pass
@@ -1829,7 +2037,7 @@ class AWSTranslationTest(BaseMachineTranslationTest):
 
     def test_clean(self) -> NoReturn:
         # Stubbing here is tricky
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     @patch("weblate.glossary.models.get_glossary_tsv", new=lambda _: "foo\tbar")
     def test_glossary(self) -> None:
@@ -1969,10 +2177,10 @@ class AlibabaTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_response(self) -> None:
         patcher = patch.object(
@@ -2004,10 +2212,10 @@ class IBMTranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_response(self) -> None:
         responses.add(
@@ -2035,7 +2243,7 @@ class IBMTranslationTest(BaseMachineTranslationTest):
 
 
 class OpenAITranslationTest(BaseMachineTranslationTest):
-    MACHINE_CLS = OpenAITranslation
+    MACHINE_CLS: type[BatchMachineTranslation] = OpenAITranslation
     EXPECTED_LEN = 1
     ENGLISH = "en"
     SUPPORTED = "zh-TW"
@@ -2048,10 +2256,10 @@ class OpenAITranslationTest(BaseMachineTranslationTest):
     }
 
     def mock_empty(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_error(self) -> NoReturn:
-        raise SkipTest("Not tested")
+        self.skipTest("Not tested")
 
     def mock_response(self) -> None:
         respx.get("https://api.openai.com/v1/models").mock(
@@ -2180,7 +2388,7 @@ class OpenAICustomTranslationTest(OpenAITranslationTest):
 
 
 class AzureOpenAITranslationTest(OpenAITranslationTest):
-    MACHINE_CLS = AzureOpenAITranslation
+    MACHINE_CLS: type[BatchMachineTranslation] = AzureOpenAITranslation
     CONFIGURATION = {
         "key": "x",
         "deployment": "my-deployment",
@@ -2320,7 +2528,7 @@ class ViewsTest(FixtureTestCase):
                     "original_source": "Hello, world!\n",
                     "source": "Hello, world!\n",
                     "diff": "<ins>Nazdar světe!</ins>",
-                    "source_diff": 'Hello, world!<span class="hlspace"><span class="space-nl"></span></span><br />',
+                    "source_diff": 'Hello, world!<span class="hlspace"><span class="space-nl">\n</span></span><br>',
                     "html": "Nazdar světe!",
                 },
                 {
@@ -2331,7 +2539,7 @@ class ViewsTest(FixtureTestCase):
                     "source": "Hello, world!\n",
                     "original_source": "Hello, world!\n",
                     "diff": "<ins>Ahoj světe!</ins>",
-                    "source_diff": 'Hello, world!<span class="hlspace"><span class="space-nl"></span></span><br />',
+                    "source_diff": 'Hello, world!<span class="hlspace"><span class="space-nl">\n</span></span><br>',
                     "html": "Ahoj světe!",
                 },
             ],
@@ -2452,7 +2660,7 @@ class CommandTest(FixtureTestCase):
         call_command("list_machinery", stdout=output)
         self.assertIn("DeepL", output.getvalue())
 
-    def test_install_no_form(self) -> None:
+    def test_valid_install_no_form(self) -> None:
         output = StringIO()
         call_command(
             "install_machinery",
@@ -2462,6 +2670,17 @@ class CommandTest(FixtureTestCase):
             stderr=output,
         )
         self.assertIn("Service installed: Weblate", output.getvalue())
+
+    def test_install_unknown_service(self) -> None:
+        output = StringIO()
+        with self.assertRaises(CommandError):
+            call_command(
+                "install_machinery",
+                "--service",
+                "unknown",
+                stdout=output,
+                stderr=output,
+            )
 
     def test_install_missing_form(self) -> None:
         output = StringIO()
@@ -2496,7 +2715,27 @@ class CommandTest(FixtureTestCase):
             "--service",
             "deepl",
             "--configuration",
-            '{"key": "x", "url": "https://api.deepl.com/v2/"}',
+            '{"key": "x1", "url": "https://api.deepl.com/v2/"}',
             stdout=output,
             stderr=output,
+        )
+        self.assertTrue(
+            Setting.objects.filter(category=SettingCategory.MT, name="deepl").exists()
+        )
+
+        # update configuration
+        call_command(
+            "install_machinery",
+            "--service",
+            "deepl",
+            "--configuration",
+            '{"key": "x2", "url": "https://api.deepl.com/v2/"}',
+            "--update",
+            stdout=output,
+            stderr=output,
+        )
+
+        setting = Setting.objects.get(category=SettingCategory.MT, name="deepl")
+        self.assertEqual(
+            setting.value, {"key": "x2", "url": "https://api.deepl.com/v2/"}
         )
