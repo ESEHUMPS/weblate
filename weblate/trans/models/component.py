@@ -8,10 +8,9 @@ import os
 import re
 import time
 from collections import defaultdict
-from copy import copy
 from glob import glob
 from itertools import chain
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 from urllib.parse import quote as urlquote
 from urllib.parse import urlparse
 
@@ -45,7 +44,12 @@ from weblate.trans.defines import (
 )
 from weblate.trans.exceptions import FileParseError, InvalidTemplateError
 from weblate.trans.fields import RegexField
-from weblate.trans.mixins import CacheKeyMixin, ComponentCategoryMixin, PathMixin
+from weblate.trans.mixins import (
+    CacheKeyMixin,
+    ComponentCategoryMixin,
+    LockMixin,
+    PathMixin,
+)
 from weblate.trans.models.alert import ALERTS, ALERTS_IMPORT, Alert, update_alerts
 from weblate.trans.models.change import Change
 from weblate.trans.models.translation import Translation
@@ -345,7 +349,13 @@ class ComponentQuerySet(models.QuerySet):
         )
 
 
-class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
+class OldComponentSettings(TypedDict):
+    check_flags: str
+
+
+class Component(
+    models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin, LockMixin
+):
     name = models.CharField(
         verbose_name=gettext_lazy("Component name"),
         max_length=COMPONENT_NAME_LENGTH,
@@ -825,7 +835,9 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
         self.needs_cleanup = False
         self.alerts_trigger: dict[str, list[dict]] = {}
         self.updated_sources: dict[int, Unit] = {}
-        self.old_component = copy(self)
+        self.old_component_settings: OldComponentSettings = {
+            "check_flags": self.check_flags
+        }
         self._sources: dict[int, Unit] = {}
         self._sources_prefetched = False
         self.logs: list[str] = []
@@ -960,7 +972,7 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
             )
             self.store_background_task(task)
 
-        if self.old_component.check_flags != self.check_flags:
+        if self.old_component_settings["check_flags"] != self.check_flags:
             transaction.on_commit(
                 lambda: self.schedule_update_checks(update_state=True)
             )
@@ -3650,14 +3662,18 @@ class Component(models.Model, PathMixin, CacheKeyMixin, ComponentCategoryMixin):
                 self.commit_pending("add language", None)
 
             # Create or get translation object
-            translation = self.translation_set.get_or_create(
+            translation, created = self.translation_set.get_or_create(
                 language=language,
                 defaults={
                     "plural": language.plural,
                     "filename": filename,
                     "language_code": code,
                 },
-            )[0]
+            )
+            # Make it clear that there is no change for the newly created translation
+            # to avoid expensive last change lookup in stats while committing changes.
+            if created:
+                Change.store_last_change(translation, None)
 
             # Create the file
             if os.path.exists(fullname):

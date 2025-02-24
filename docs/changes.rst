@@ -1,7 +1,57 @@
+Weblate 5.10.2
+--------------
+
+*Not yet released.*
+
+.. rubric:: New features
+
+.. rubric:: Improvements
+
+.. rubric:: Bug fixes
+
+.. rubric:: Compatibility
+
+.. rubric:: Upgrading
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+.. rubric:: Contributors
+
+.. include:: changes/contributors/5.10.2.rst
+
+`All changes in detail <https://github.com/WeblateOrg/weblate/milestone/138?closed=1>`__.
+
+Weblate 5.10.1
+--------------
+
+*Released on February 21st 2025.*
+
+.. rubric:: Improvements
+
+* :ref:`check-multiple-failures` better shows failing checks including links to the strings.
+* Detailed overview of locked components on project repository management.
+* :ref:`search-strings` supports searching by source string state.
+
+.. rubric:: Bug fixes
+
+* :ref:`download` performs faster on project and language scopes.
+* :ref:`zen-mode` does not display the source string twice when editing it.
+* Fixed :ref:`glossary` terms highlighting.
+
+.. rubric:: Upgrading
+
+Please follow :ref:`generic-upgrade-instructions` in order to perform update.
+
+.. rubric:: Contributors
+
+.. include:: changes/contributors/5.10.1.rst
+
+`All changes in detail <https://github.com/WeblateOrg/weblate/milestone/137?closed=1>`__.
+
 Weblate 5.10
 ------------
 
-*Expected 15th February 2025.*
+*Released on February 14th 2025.*
 
 .. rubric:: New features
 
@@ -28,6 +78,8 @@ Weblate 5.10
 * :ref:`component-enforced_checks` are now applied on strings imported from the repository.
 * Reduced false positives in :ref:`check-end-colon` and :ref:`check-end-stop` for CJK languages.
 * OpenAPI schema for API includes more information.
+* :ref:`check-regex` supports advanced regular expressions.
+* :ref:`check-same` gracefully deals with case-insensitive languages.
 
 .. rubric:: Bug fixes
 
@@ -40,6 +92,7 @@ Weblate 5.10
 * :ref:`autofix-html` automatic fixups honors the ``ignore-safe-html`` flag.
 * :ref:`check-punctuation-spacing` no longer applies to Breton.
 * Fixed :ref:`addon-weblate.git.squash` on linked repositories.
+* :ref:`check-multiple-failures` avoids false positives and better lists related checks.
 
 .. rubric:: Compatibility
 
@@ -879,8 +932,6 @@ Weblate 5.1.1
 
 *Released on October 25th 2023.*
 
-.. rubric:: New features
-
 .. rubric:: Improvements
 
 * :ref:`addon-weblate.consistency.languages` now uses a dedicated user for changes.
@@ -892,8 +943,6 @@ Weblate 5.1.1
 
 * Added plurals validation when editing string using the API.
 * Replacing a file using upload when existing is corrupted.
-
-.. rubric:: Compatibility
 
 .. rubric:: Upgrading
 

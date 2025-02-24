@@ -55,6 +55,7 @@ PLURAL_TITLE = """
 """
 COPY_RE = re.compile(r"\([0-9]+\)")
 KNOWN_SUFFIXES = {"hant", "hans", "latn", "cyrl", "shaw"}
+GENERATED_SUFFIX = "(generated)"
 
 
 def get_plural_type(base_code, plural_formula):
@@ -339,7 +340,7 @@ class LanguageQuerySet(models.QuerySet):
         It is based on code and best guess of parameters.
         """
         # Create standard language
-        name = f"{code} (generated)"
+        name = f"{code} {GENERATED_SUFFIX}"
         if create:
             lang = self.get_or_create(code=code, defaults={"name": name})[0]
         else:
@@ -453,6 +454,10 @@ class LanguageQuerySet(models.QuerySet):
         return self.prefetch_related("plural_set")
 
 
+def dummy_logger(message: str) -> None:
+    return
+
+
 class LanguageManager(models.Manager.from_queryset(LanguageQuerySet)):
     use_in_migrations = True
 
@@ -465,7 +470,12 @@ class LanguageManager(models.Manager.from_queryset(LanguageQuerySet)):
         """Return English language object."""
         return self.get(code=settings.DEFAULT_LANGUAGE, skip_cache=True)
 
-    def setup(self, update, logger=lambda x: x) -> None:  # noqa: C901
+    def setup(  # noqa: C901
+        self,
+        *,
+        update: bool,
+        logger: Callable[[str], None] | None = None,
+    ) -> None:
         """
         Create basic set of languages.
 
@@ -473,6 +483,9 @@ class LanguageManager(models.Manager.from_queryset(LanguageQuerySet)):
         """
         from weblate_language_data.languages import LANGUAGES
         from weblate_language_data.population import POPULATION
+
+        if logger is None:
+            logger = dummy_logger
 
         # Invalidate cache, we might change languages
         self.flush_object_cache()
@@ -610,8 +623,15 @@ class LanguageManager(models.Manager.from_queryset(LanguageQuerySet)):
 
         self._fixup_plural_types(logger)
 
-    def move_language(self, source: Language, target: Language, logger=lambda x: x):
+    def move_language(
+        self,
+        source: Language,
+        target: Language,
+        logger: Callable[[str], None] | None = None,
+    ):
         """Migrate all content from one language to anoother."""
+        if logger is None:
+            logger = dummy_logger
         for translation in source.translation_set.iterator():
             other = translation.component.translation_set.filter(language=target)
             if other.exists():
@@ -637,14 +657,24 @@ class LanguageManager(models.Manager.from_queryset(LanguageQuerySet)):
             group.languages.add(target)
 
         for plural in source.plural_set.iterator():
-            formulas = target.plural_set.filter(formula=plural.formula)
+            formulas = target.plural_set.filter(
+                source=plural.source, formula=plural.formula
+            )
             try:
+                # Use matching plural if it exists
                 new_plural = formulas[0]
             except IndexError:
-                plural.language = target
+                # Create new plural based on current one
+                new_plural = target.plural_set.create(
+                    source=plural.source,
+                    number=plural.number,
+                    formula=plural.formula,
+                    type=plural.type,
+                )
                 plural.save()
-            else:
-                plural.translation_set.update(plural=new_plural)
+
+            # Migrate all moved translations to the new plural
+            plural.translation_set.filter(language=target).update(plural=new_plural)
 
         source.memory_source_set.update(source_language=target)
         source.memory_target_set.update(target_language=target)
@@ -672,7 +702,7 @@ def setup_lang(sender, **kwargs) -> None:
     """Create basic set of languages on database migration."""
     if settings.UPDATE_LANGUAGES:
         with transaction.atomic():
-            Language.objects.setup(True)
+            Language.objects.setup(update=True)
 
 
 class Language(models.Model, CacheKeyMixin):
@@ -709,9 +739,7 @@ class Language(models.Model, CacheKeyMixin):
         base_manager_name = "objects"
 
     def __str__(self) -> str:
-        if self.show_language_code:
-            return f"{gettext(self.name)} ({self.code})"
-        return gettext(self.name)
+        return self.format_full_name(self.get_localized_name())
 
     def __init__(self, *args, **kwargs) -> None:
         from weblate.utils.stats import LanguageStats
@@ -733,9 +761,18 @@ class Language(models.Model, CacheKeyMixin):
 
     def get_name(self):
         """Not localized version of __str__."""
+        return self.format_full_name(self.name)
+
+    def format_full_name(self, name: str):
         if self.show_language_code:
-            return f"{self.name} ({self.code})"
-        return self.name
+            return f"{name} ({self.code})"
+        return name
+
+    def get_localized_name(self):
+        if self.name.endswith(GENERATED_SUFFIX):
+            return self.name
+        name = gettext(self.name)
+        return f"{name[0].title()}{name[1:]}"
 
     def guess_direction(self) -> str:
         if self.base_code in RTL_LANGS or self.code in RTL_LANGS:

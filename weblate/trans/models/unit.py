@@ -1419,8 +1419,8 @@ class Unit(models.Model, LoggerMixin):
             args = src, tgt, self
         if self.translation.component.is_glossary:
             checks = CHECKS.glossary
-            meth = "check_source"
-            args = src, self
+            meth = "check_target"
+            args = src, tgt, self
 
         # Run all checks
         if propagate is True:
@@ -1690,20 +1690,20 @@ class Unit(models.Model, LoggerMixin):
             return "html"
         return "none"
 
-    def get_secondary_units(self, user: User):
+    def get_secondary_units(self, user: User) -> list[Unit]:
         """Return list of secondary units."""
-        secondary_langs = user.profile.secondary_languages.exclude(
-            id__in=[
-                self.translation.language_id,
-                self.translation.component.source_language_id,
-            ]
-        )
+        secondary_langs: set[int] = user.profile.secondary_language_ids - {
+            self.translation.language_id,
+            self.translation.component.source_language_id,
+        }
+        if not secondary_langs:
+            return []
         result = get_distinct_translations(
             self.source_unit.unit_set.filter(
                 Q(translation__language__in=secondary_langs)
                 & Q(state__gte=STATE_TRANSLATED)
                 & Q(state__lt=STATE_READONLY)
-                & ~Q(target="")
+                & ~Q(target__lower__md5=MD5(Value("")))
                 & ~Q(pk=self.pk)
             ).select_related(
                 "source_unit",
